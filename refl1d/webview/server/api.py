@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
@@ -240,6 +241,17 @@ async def export_model_script(pathlist: List[str], filename: str):
         await add_notification(content=f"to {filename}", title="Model exported:", timeout=2000)
 
 
+@lru_cache(maxsize=1)
+def _get_drives() -> List[str]:
+    if hasattr(os, "listdrives"):
+        return os.listdrives()
+    if sys.platform == "win32":
+        import ctypes
+        bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+        return [f"{chr(65 + i)}:\\" for i in range(26) if bitmask & (1 << i)]
+    return ["/"]
+
+
 def _get_dirlisting_sync(pathlist: Optional[List[str]] = None):
     """Directory listing that avoids per-subfolder glob (network drive safe)."""
     subfolders = []
@@ -270,7 +282,7 @@ def _get_dirlisting_sync(pathlist: Optional[List[str]] = None):
             fileinfo["size"] = stat.st_size
             files.append(fileinfo)
 
-    drives = os.listdrives() if hasattr(os, "listdrives") else []
+    drives = _get_drives()
     return dict(drives=drives, pathlist=abs_path.parts, subfolders=subfolders, files=files)
 
 
