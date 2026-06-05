@@ -1,6 +1,9 @@
 [project]
 name = "refl1d"
-dynamic = ["version"]
+# Static version for offline/zip installs (no git metadata available).
+# On the main branches this is dynamic via versioningit; here it is pinned
+# so `pip install .` works from a downloaded GitHub zip without git.
+version = "1.0.2a0"
 description = "Neutron and X-ray reflectometry analysis"
 readme = "README.rst"
 authors = [
@@ -52,7 +55,7 @@ homepage = "https://refl1d.github.io"
 repository = "https://github.com/reflectometry/refl1d"
 
 [build-system]
-requires = ["setuptools", "versioningit"]
+requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [tool.ruff]
@@ -68,9 +71,6 @@ exclude = ["*.txt"]
 #     "SIM", # flake8-simplify
 #     "I",   # isort
 # ]
-
-[tool.setuptools.dynamic]
-version = { attr = "refl1d.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -91,10 +91,3 @@ norecursedirs = ["view", "mystic", "bin", "webview/client", "explore"]
 python_files = ["*.py"]
 python_classes = ["NoClassTestsWillMatch"]
 python_functions = ["test", "*_test", "test_*"]
-
-[tool.versioningit.vcs]
-method = "git"
-default-tag = "0.0.1"
-
-[tool.versioningit.write]
-file = "refl1d/_version.py"
