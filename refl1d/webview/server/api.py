@@ -269,12 +269,34 @@ async def export_results(export_path: Union[str, List[str]] = ""):
     path = Path(*export_path).expanduser().absolute()
     notification_id = await add_notification(content=f"<span>{str(path)}</span>", title="Export started", timeout=None)
     try:
-        await to_thread(_export_with_csv, path, problem, fit, serializer)
+        csv_path, csv_error = await to_thread(_export_with_csv, path, problem, fit, serializer)
     finally:
         await emit("cancel_notification", notification_id)
 
+    # Surface the parameter-CSV outcome in the UI. Previously a CSV failure was
+    # only logged to the server console, so it looked like nothing happened.
+    if csv_error is not None:
+        await add_notification(
+            content=f"<span>{csv_error}</span>",
+            title="Parameter CSV (-pars.csv) not written",
+            timeout=10000,
+        )
+    elif csv_path is not None:
+        await add_notification(
+            content=f"<span>{csv_path.name}</span>",
+            title="Parameter CSV exported:",
+            timeout=3000,
+        )
+
 
 def _export_with_csv(path, problem, fit, serializer, basename=None):
+    """Run the standard bumps export bundle, then add the fork's parameter CSV.
+
+    Returns ``(csv_path, error_message)``. On success ``error_message`` is
+    ``None`` and ``csv_path`` is the file written; on failure ``csv_path`` is
+    ``None`` and ``error_message`` describes what went wrong. A CSV failure is
+    never allowed to break the rest of the export bundle.
+    """
     # Standard bumps bundle first (.par, .out, plots, -fit.json, ...).
     export_fit(path, problem, fit, serializer, basename)
     # Then the fork's Excel-friendly parameter CSV, using the same basename logic.
@@ -282,10 +304,14 @@ def _export_with_csv(path, problem, fit, serializer, basename=None):
         problem_name = getattr(problem, "name", "model")
         problem_path = getattr(problem, "path", f"{problem_name}.py")
         basename = Path(problem_path).with_suffix("").name
+    csv_path = Path(path) / f"{basename}-pars.csv"
     try:
-        write_parameters_csv(problem, fit, Path(path) / f"{basename}-pars.csv")
+        write_parameters_csv(problem, fit, csv_path)
+        return csv_path, None
     except Exception as exc:  # never let the CSV break the rest of the export
-        logger.error(f"Error writing {basename}-pars.csv: {exc}")
+        message = f"Error writing {csv_path.name}: {exc}"
+        logger.error(message)
+        return None, message
 
 
 @lru_cache(maxsize=1)
