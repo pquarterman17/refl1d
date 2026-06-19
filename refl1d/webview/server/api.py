@@ -11,6 +11,8 @@ import numpy as np
 from bumps.errplot import error_points_from_state
 from bumps.webview.server.api import (
     add_notification,
+    emit,
+    export_fit,
     get_chisq,
     log,
     logger,
@@ -18,6 +20,7 @@ from bumps.webview.server.api import (
     register,
     state,
     to_json_compatible_dict,
+    to_thread,
     # For jupyter users:
     set_problem,
     start_fit_thread,
@@ -37,6 +40,7 @@ from refl1d.probe import PolarizedNeutronProbe, ProbeSet
 from .profile_uncertainty import show_errors
 from .profile_plot import plot_multiple_sld_profiles, ModelSpec
 from .scriptify import serialize_fitproblem as scriptify_fitproblem
+from .export_csv import write_parameters_csv
 
 # state.problem.serializer = "dataclass"
 
@@ -244,12 +248,53 @@ async def export_model_script(pathlist: List[str], filename: str):
         await add_notification(content=f"to {filename}", title="Model exported:", timeout=2000)
 
 
+@register
+async def export_results(export_path: Union[str, List[str]] = ""):
+    """Override bumps' export to also write a spreadsheet-friendly ``<model>-pars.csv``.
+
+    Runs the standard bumps export bundle (.par, .out, plots, -fit.json, ...) and
+    then adds an Excel-ready CSV of the fit parameters. See :mod:`.export_csv`.
+    """
+    problem_state = state.problem
+    if problem_state is None or problem_state.fitProblem is None:
+        logger.warning("Export failed: no problem loaded.")
+        return
+
+    problem = deepcopy(problem_state.fitProblem)
+    serializer = problem_state.serializer
+    fit = deepcopy(state.fitting)
+
+    if not isinstance(export_path, list):
+        export_path = [export_path]
+    path = Path(*export_path).expanduser().absolute()
+    notification_id = await add_notification(content=f"<span>{str(path)}</span>", title="Export started", timeout=None)
+    try:
+        await to_thread(_export_with_csv, path, problem, fit, serializer)
+    finally:
+        await emit("cancel_notification", notification_id)
+
+
+def _export_with_csv(path, problem, fit, serializer, basename=None):
+    # Standard bumps bundle first (.par, .out, plots, -fit.json, ...).
+    export_fit(path, problem, fit, serializer, basename)
+    # Then the fork's Excel-friendly parameter CSV, using the same basename logic.
+    if not basename:
+        problem_name = getattr(problem, "name", "model")
+        problem_path = getattr(problem, "path", f"{problem_name}.py")
+        basename = Path(problem_path).with_suffix("").name
+    try:
+        write_parameters_csv(problem, fit, Path(path) / f"{basename}-pars.csv")
+    except Exception as exc:  # never let the CSV break the rest of the export
+        logger.error(f"Error writing {basename}-pars.csv: {exc}")
+
+
 @lru_cache(maxsize=1)
 def _get_drives() -> List[str]:
     if hasattr(os, "listdrives"):
         return os.listdrives()
     if sys.platform == "win32":
         import ctypes
+
         bitmask = ctypes.windll.kernel32.GetLogicalDrives()
         return [f"{chr(65 + i)}:\\" for i in range(26) if bitmask & (1 << i)]
     return ["/"]
