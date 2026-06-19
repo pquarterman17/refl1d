@@ -1,4 +1,4 @@
-bumps==1.0.5a0
+bumps==1.0.5rc2
 matplotlib
 numba
 numpy
