@@ -8,6 +8,7 @@ to create a fittable reflectometry model.
 
 import json
 import os
+import re
 import traceback
 from dataclasses import dataclass
 from math import floor, log10, pi
@@ -31,6 +32,17 @@ from . import profile
 from .probe.probe import PolarizedNeutronProbe, Probe, QProbe, PolarizedQProbe
 from .sample import layers, material
 from .utils import asbytes
+
+
+def _filename_tag(name):
+    """Reduce a dataset name to a filesystem-safe tag for use in export
+    filenames. Runs of characters that are awkward in a filename are collapsed
+    to a single underscore. Returns an empty string if nothing usable remains.
+    """
+    if not name:
+        return ""
+    tag = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name).strip())
+    return tag.strip("._-")
 
 
 class WebviewPlotFunction(Protocol):
@@ -216,10 +228,30 @@ class ExperimentBase:
         self.probe.simulate_data(theory, noise=noise)
 
     def save(self, basename):
+        basename = self._export_basename(basename)
         self.save_profile(basename)
         # self.save_staj(basename)
         self.save_refl(basename)
         self.save_json(basename)
+
+    def _export_basename(self, basename):
+        """Append the dataset name to the export basename so multi-dataset fits
+        produce human-readable filenames (e.g. ``store-1-SampleA-refl.dat``
+        instead of ``store-1-refl.dat``). The numeric index added upstream by
+        bumps is preserved, so files stay unique even if two datasets share a
+        name. The name is the experiment name, which defaults to the probe name.
+
+        Only multi-dataset fits are affected: bumps appends a numeric model
+        index (``-1``, ``-2``, ...) to the basename for those, so single-dataset
+        exports (no trailing index) keep their historical ``store-refl.dat``
+        naming.
+        """
+        if not re.search(r"-\d+$", os.path.basename(basename)):
+            return basename
+        tag = _filename_tag(getattr(self, "name", None))
+        if not tag:
+            return basename
+        return basename + "-" + tag
 
     def save_json(self, basename):
         """Save the experiment as a json file"""

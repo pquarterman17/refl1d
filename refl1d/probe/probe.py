@@ -67,6 +67,7 @@ PROBE_KW = (
     "data",
     "name",
     "filename",
+    "description",
     "intensity",
     "background",
     "back_absorption",
@@ -337,6 +338,19 @@ class BaseProbe:
             header = "# %17s %20s %20s %20s\n" % ("Q (1/A)", "dQ (1/A)", "theory", "fresnel")
 
         header = ("# intensity: %.15g\n# background: %.15g\n" % (self.intensity.value, self.background.value)) + header
+
+        # Prepend a self-describing preamble so the saved file records which
+        # dataset it came from and any user comment. This is especially useful
+        # for multi-dataset fits where the files are otherwise only told apart
+        # by a numeric index. The comment is collapsed to a single line so the
+        # header stays parseable by load4 if the file is ever re-read.
+        preamble = ""
+        if getattr(self, "name", None):
+            preamble += "# name: %s\n" % self.name
+        description = getattr(self, "description", None)
+        if description:
+            preamble += "# comment: %s\n" % " ".join(str(description).splitlines())
+        header = preamble + header
 
         with open(filename, "wb") as fid:
             # print("saving", A)
@@ -692,6 +706,7 @@ class Probe(BaseProbe):
     sample_broadening: Parameter
     name: Optional[str] = None
     filename: Optional[str] = None
+    description: Optional[str] = None
     back_reflectivity: bool = False
     R: Optional[Any] = None
     dR: Optional[Any] = 0
@@ -740,6 +755,7 @@ class Probe(BaseProbe):
         back_reflectivity=False,
         name: Optional[str] = None,
         filename=None,
+        description: Optional[str] = None,
         dQo=None,
         resolution: Literal["normal", "uniform"] = "normal",
         oversampling=None,
@@ -771,6 +787,7 @@ class Probe(BaseProbe):
         self._set_TLR(T, dT, L, dL, R, dR, dQo)
         self.name = name
         self.filename = filename
+        self.description = description
         self.resolution = resolution
         self.oversampling = oversampling
         self.oversampling_seed = oversampling_seed
@@ -935,6 +952,7 @@ class Probe(BaseProbe):
                 "type": type(self).__name__,
                 "name": self.name,
                 "filename": self.filename,
+                "description": self.description,
                 "intensity": self.intensity,
                 "background": self.background,
                 "back_absorption": self.back_absorption,
@@ -1376,6 +1394,7 @@ class QProbe(BaseProbe):
     dQ: "NDArray"
     name: Optional[str]
     filename: Optional[str]
+    description: Optional[str]
     intensity: Parameter
     back_absorption: Parameter
     background: Parameter
@@ -1398,6 +1417,7 @@ class QProbe(BaseProbe):
         data=None,  # deprecated
         name=None,
         filename=None,
+        description=None,
         intensity=1,
         background=0,
         back_absorption=1,
@@ -1430,6 +1450,7 @@ class QProbe(BaseProbe):
         self._calc_Q = np.unique(self.Q)
         self.name = name
         self.filename = filename
+        self.description = description
         self.resolution = resolution
         self.oversampling = oversampling
         self.oversampling_seed = oversampling_seed
@@ -1522,6 +1543,7 @@ class PolarizedNeutronProbe:
     """
 
     name: str
+    description: Optional[str] = None
     mm: optional_xs = None
     mp: optional_xs = None
     pm: optional_xs = None
@@ -1546,6 +1568,7 @@ class PolarizedNeutronProbe:
         pm: optional_xs = None,
         pp: optional_xs = None,
         name=None,
+        description: Optional[str] = None,
         Aguide=BASE_GUIDE_ANGLE,
         H=0,
         oversampling=None,
@@ -1567,6 +1590,14 @@ class PolarizedNeutronProbe:
         if name is None and self.mm is not None:
             name = self.mm.name
         self.name = name
+        self.description = description
+        # Let a probe-level comment reach the per-cross-section saved files
+        # (PolarizedNeutronProbe.save delegates to each cross-section's save),
+        # without clobbering a comment already set on an individual section.
+        if description is not None:
+            for xs in self.xs:
+                if xs is not None and getattr(xs, "description", None) is None:
+                    xs.description = description
         # self.T, self.dT, self.L, self.dL, self.Q, self.dQ \
         #     = measurement_union(xs)
         # self._set_calc(self.T, self.L)
@@ -1917,6 +1948,7 @@ class PolarizedQProbe(PolarizedNeutronProbe):
         pm: optional_xs = None,
         pp: optional_xs = None,
         name=None,
+        description: Optional[str] = None,
         Aguide=BASE_GUIDE_ANGLE,
         H=0,
         oversampling: Optional[int] = None,
@@ -1935,6 +1967,11 @@ class PolarizedQProbe(PolarizedNeutronProbe):
                 setattr(self, xs_name, xs[index])
         self._check()
         self.name = name if name is not None else self.pp.name
+        self.description = description
+        if description is not None:
+            for xs in self.xs:
+                if xs is not None and getattr(xs, "description", None) is None:
+                    xs.description = description
         self.unique_L = None
         qualifier = " " + self.name if self.name is not None else ""
         self.Aguide = Parameter.default(Aguide, name="Aguide" + qualifier, limits=[-360, 360])

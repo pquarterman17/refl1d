@@ -137,6 +137,7 @@ def load4(
     sep=None,
     comment="#",
     name=None,
+    description=None,
     intensity=1,
     background=0,
     back_absorption=1,
@@ -231,6 +232,10 @@ def load4(
     determining the scattering length density of a material.
     Default is 'neutron'
 
+    *description* is a free-form comment describing the dataset. It is
+    written into the header of the saved ``-refl.dat`` file. If not given,
+    a ``# comment: ...`` line in the data file header is used instead.
+
     *columns* is a string giving the column order in the file.  Default
     order is "Q R dR dQ".  Note: include dR and dQ even if the file only
     has two or three columns, but put the missing columns at the end.
@@ -268,6 +273,7 @@ def load4(
     probe_args = dict(
         name=name,
         filename=filename,
+        description=description,
         intensity=intensity,
         background=background,
         back_absorption=back_absorption,
@@ -322,6 +328,17 @@ def _data_as_probe(
     decoder = json.loads if json_header_encoding else lambda x: x
     name = probe_args["filename"]
     header, data = entry
+
+    # Fall back to a "# comment: ..." line in the file header when the caller
+    # did not pass an explicit description. The header value may be json-encoded
+    # (for .refl files) or plain text, so decode defensively.
+    if probe_args.get("description") is None and "comment" in header:
+        raw_comment = header["comment"]
+        try:
+            comment = decoder(raw_comment)
+        except (ValueError, TypeError):
+            comment = raw_comment
+        probe_args = {**probe_args, "description": comment}
     if len(data) == 2:
         data_Q, data_R = (data[k][index] for k in column_order[:2])
         data_dR, data_dQ = None, None
