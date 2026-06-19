@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /// <reference types="@types/plotly.js" />
-import { ref, shallowRef } from "vue";
+import { onMounted, onUnmounted, ref, shallowRef } from "vue";
 import type { AsyncSocket } from "bumps-webview-client/src/asyncSocket";
 import { configWithSVGDownloadButton } from "bumps-webview-client/src/plotly_extras";
 import { setupDrawLoop } from "bumps-webview-client/src/setupDrawLoop";
@@ -24,6 +24,21 @@ const props = defineProps<{
 }>();
 
 setupDrawLoop("updated_parameters", props.socket, fetch_and_draw);
+
+// Resize the plot only when its container actually changes size (panel/tab/window),
+// rather than after every data redraw. `responsive: true` only covers window
+// resizes, so a ResizeObserver is needed for container-driven layout changes.
+let resize_observer: ResizeObserver | null = null;
+onMounted(() => {
+  resize_observer = new ResizeObserver(() => {
+    if (plot_div.value) Plotly.Plots.resize(plot_div.value);
+  });
+  if (plot_div.value) resize_observer.observe(plot_div.value);
+});
+onUnmounted(() => {
+  resize_observer?.disconnect();
+  resize_observer = null;
+});
 
 const REFLECTIVITY_PLOTS = ["Fresnel (R/R_substrate)", "Reflectivity", "RQ^4", "Spin Asymmetry"] as const;
 type ReflectivityPlotEnum = typeof REFLECTIVITY_PLOTS;
@@ -354,7 +369,23 @@ async function change_plot_type() {
   if (reflectivity_type.value === "Spin Asymmetry") {
     log_y.value = false;
   }
-  await fetch_and_draw();
+  // All reflectivity views are derived client-side from the cached plot_data,
+  // so switching views does not require a new server fetch.
+  await (plot_data.value.length ? draw_plot() : fetch_and_draw());
+}
+
+let draw_queued = false;
+function request_draw() {
+  // Coalesce rapid client-side redraws (e.g. dragging the offset slider) to at
+  // most one per animation frame.
+  if (draw_queued) {
+    return;
+  }
+  draw_queued = true;
+  requestAnimationFrame(() => {
+    draw_queued = false;
+    draw_plot();
+  });
 }
 
 async function draw_plot() {
@@ -430,7 +461,6 @@ async function draw_plot() {
     ...configWithSVGDownloadButton,
   };
   await Plotly.react(plot_div.value as HTMLDivElement, [...theory_traces, ...data_traces], layout, config);
-  await Plotly.Plots.resize(plot_div.value as HTMLDivElement);
 }
 
 /**
@@ -561,7 +591,7 @@ function interp(x: number[], xp: number[], fp: number[]): number[] {
           max="1.0"
           step="0.01"
           class="form-range"
-          @input="draw_plot"
+          @input="request_draw"
         />
       </div>
     </div>
