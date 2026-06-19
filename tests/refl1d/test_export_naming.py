@@ -93,6 +93,34 @@ def test_probe_save_writes_comment_and_name(tmp_path):
     assert "# comment: 5K field cooled" in text
 
 
+def test_probe_save_omits_intensity_and_background(tmp_path):
+    probe = _make_qprobe(name="SampleA", description="note")
+    out = tmp_path / "out-refl.dat"
+    probe.save(str(out), theory=(probe.Q, probe.R))
+    text = out.read_text()
+    assert "# intensity:" not in text
+    assert "# background:" not in text
+
+
+def test_probe_save_units_on_separate_row(tmp_path):
+    probe = _make_qprobe(name="SampleA")
+    out = tmp_path / "out-refl.dat"
+    probe.save(str(out), theory=(probe.Q, probe.R))
+    text = out.read_text()
+    # Units are no longer parenthesised after the column name.
+    assert "(1/A)" not in text
+    header_lines = [ln for ln in text.splitlines() if ln.startswith("#")]
+    # One row holds the column names (no units)...
+    name_rows = [ln for ln in header_lines if "theory" in ln and "fresnel" in ln]
+    assert len(name_rows) == 1
+    assert "1/A" not in name_rows[0]
+    assert "Q" in name_rows[0] and "dQ" in name_rows[0] and "dR" in name_rows[0]
+    # ...and a separate row holds the units.
+    unit_rows = [ln for ln in header_lines if "1/A" in ln]
+    assert len(unit_rows) == 1
+    assert "theory" not in unit_rows[0]
+
+
 def test_probe_save_without_comment_has_no_comment_line(tmp_path):
     probe = _make_qprobe(name="SampleA", description=None)
     out = tmp_path / "out-refl.dat"

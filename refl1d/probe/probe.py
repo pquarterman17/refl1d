@@ -329,15 +329,22 @@ class BaseProbe:
         if len(Q) != len(self.Q):
             # Saving interpolated data
             A = np.array((Q, R, np.interp(Q, self.Q, FQ)))
-            header = "# %17s %20s %20s\n" % ("Q (1/A)", "theory", "fresnel")
+            fmt = "# %17s %20s %20s\n"
+            names = ("Q", "theory", "fresnel")
+            units = ("1/A", "", "")
         elif getattr(self, "R", None) is not None:
             A = np.array((self.Q, self.dQ, self.R, self.dR, R, FQ))
-            header = "# %17s %20s %20s %20s %20s %20s\n" % ("Q (1/A)", "dQ (1/A)", "R", "dR", "theory", "fresnel")
+            fmt = "# %17s %20s %20s %20s %20s %20s\n"
+            names = ("Q", "dQ", "R", "dR", "theory", "fresnel")
+            units = ("1/A", "1/A", "", "", "", "")
         else:
             A = np.array((self.Q, self.dQ, R, FQ))
-            header = "# %17s %20s %20s %20s\n" % ("Q (1/A)", "dQ (1/A)", "theory", "fresnel")
+            fmt = "# %17s %20s %20s %20s\n"
+            names = ("Q", "dQ", "theory", "fresnel")
+            units = ("1/A", "1/A", "", "")
 
-        header = ("# intensity: %.15g\n# background: %.15g\n" % (self.intensity.value, self.background.value)) + header
+        # Column names and their units go on separate header rows.
+        header = fmt % names + fmt % units
 
         # Prepend a self-describing preamble so the saved file records which
         # dataset it came from and any user comment. This is especially useful
