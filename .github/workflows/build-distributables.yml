@@ -6,7 +6,9 @@ on:
   workflow_dispatch:
 
 env:
-  branch_name: master
+  # Fork build: package the feat/plot-webgl-payload branch (all four plot perf
+  # changes: #1+#2 redraw fixes, #3 theory-only updates, #4 WebGL). Test build.
+  branch_name: feat/plot-webgl-payload
   PACKAGE_NAME: refl1d
   PYTHON_VERSION: 3.12
 
@@ -19,10 +21,9 @@ jobs:
     strategy:
       matrix:
         config:
-          - { os: ubuntu-latest }
+          # Fork build: Windows only. macOS needs Apple signing secrets the fork
+          # does not have; Linux/macOS omitted to keep test builds fast.
           - { os: windows-latest }
-          - { os: macos-latest }
-          - { os: macos-15-intel }
 
     steps:
     - uses: actions/checkout@v6
