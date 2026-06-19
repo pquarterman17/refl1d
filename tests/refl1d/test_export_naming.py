@@ -51,7 +51,7 @@ def _write_refl(path, comment_line=None):
     dQ = 0.001 * np.ones_like(Q)
     for q, r, dr, dq in zip(Q, R, dR, dQ):
         lines.append("%.6g %.6g %.6g %.6g" % (q, r, dr, dq))
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return str(path)
 
 
@@ -88,7 +88,7 @@ def test_probe_save_writes_comment_and_name(tmp_path):
     probe = _make_qprobe(name="SampleA", description="5K field cooled")
     out = tmp_path / "out-refl.dat"
     probe.save(str(out), theory=(probe.Q, probe.R))
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "# name: SampleA" in text
     assert "# comment: 5K field cooled" in text
 
@@ -97,7 +97,7 @@ def test_probe_save_omits_intensity_and_background(tmp_path):
     probe = _make_qprobe(name="SampleA", description="note")
     out = tmp_path / "out-refl.dat"
     probe.save(str(out), theory=(probe.Q, probe.R))
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "# intensity:" not in text
     assert "# background:" not in text
 
@@ -106,17 +106,17 @@ def test_probe_save_units_on_separate_row(tmp_path):
     probe = _make_qprobe(name="SampleA")
     out = tmp_path / "out-refl.dat"
     probe.save(str(out), theory=(probe.Q, probe.R))
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     # Units are no longer parenthesised after the column name.
-    assert "(1/A)" not in text
+    assert "(1/Å)" not in text
     header_lines = [ln for ln in text.splitlines() if ln.startswith("#")]
     # One row holds the column names (no units)...
     name_rows = [ln for ln in header_lines if "theory" in ln and "fresnel" in ln]
     assert len(name_rows) == 1
-    assert "1/A" not in name_rows[0]
+    assert "1/Å" not in name_rows[0]
     assert "Q" in name_rows[0] and "dQ" in name_rows[0] and "dR" in name_rows[0]
-    # ...and a separate row holds the units.
-    unit_rows = [ln for ln in header_lines if "1/A" in ln]
+    # ...and a separate row holds the units, using the Ångström symbol.
+    unit_rows = [ln for ln in header_lines if "1/Å" in ln]
     assert len(unit_rows) == 1
     assert "theory" not in unit_rows[0]
 
@@ -125,7 +125,7 @@ def test_probe_save_without_comment_has_no_comment_line(tmp_path):
     probe = _make_qprobe(name="SampleA", description=None)
     out = tmp_path / "out-refl.dat"
     probe.save(str(out), theory=(probe.Q, probe.R))
-    text = out.read_text()
+    text = out.read_text(encoding="utf-8")
     assert "# comment:" not in text
     assert "# name: SampleA" in text
 
@@ -134,7 +134,7 @@ def test_probe_save_multiline_comment_collapsed(tmp_path):
     probe = _make_qprobe(description="line one\nline two")
     out = tmp_path / "out-refl.dat"
     probe.save(str(out), theory=(probe.Q, probe.R))
-    comment_lines = [ln for ln in out.read_text().splitlines() if ln.startswith("# comment:")]
+    comment_lines = [ln for ln in out.read_text(encoding="utf-8").splitlines() if ln.startswith("# comment:")]
     assert comment_lines == ["# comment: line one line two"]
 
 
@@ -183,4 +183,4 @@ def test_experiment_save_includes_name_in_filenames(tmp_path):
     profile = tmp_path / "myfit-1-SampleA-profile.dat"
     assert refl.exists()
     assert profile.exists()
-    assert "# comment: 5K field cooled" in refl.read_text()
+    assert "# comment: 5K field cooled" in refl.read_text(encoding="utf-8")

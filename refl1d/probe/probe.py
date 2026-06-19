@@ -331,17 +331,17 @@ class BaseProbe:
             A = np.array((Q, R, np.interp(Q, self.Q, FQ)))
             fmt = "# %17s %20s %20s\n"
             names = ("Q", "theory", "fresnel")
-            units = ("1/A", "", "")
+            units = ("1/Å", "", "")
         elif getattr(self, "R", None) is not None:
             A = np.array((self.Q, self.dQ, self.R, self.dR, R, FQ))
             fmt = "# %17s %20s %20s %20s %20s %20s\n"
             names = ("Q", "dQ", "R", "dR", "theory", "fresnel")
-            units = ("1/A", "1/A", "", "", "", "")
+            units = ("1/Å", "1/Å", "", "", "", "")
         else:
             A = np.array((self.Q, self.dQ, R, FQ))
             fmt = "# %17s %20s %20s %20s\n"
             names = ("Q", "dQ", "theory", "fresnel")
-            units = ("1/A", "1/A", "", "")
+            units = ("1/Å", "1/Å", "", "")
 
         # Column names and their units go on separate header rows.
         header = fmt % names + fmt % units
