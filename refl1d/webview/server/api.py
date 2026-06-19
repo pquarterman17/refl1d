@@ -42,9 +42,14 @@ from .scriptify import serialize_fitproblem as scriptify_fitproblem
 
 
 @register
-async def get_plot_data(view: str = "linear"):
+async def get_plot_data(view: str = "linear", include_data: bool = True):
     # TODO: implement view-dependent return instead of doing this in JS
     # (calculate x,y,dy.dx for given view, excluding log)
+    #
+    # *include_data* controls whether the static measured arrays (R, dR) are
+    # included. During a fit only the theory changes, so the client can fetch
+    # the full payload once and then request include_data=False on each update
+    # to avoid re-sending the unchanging measured reflectivity.
     if state.problem is None or state.problem.fitProblem is None:
         return None
     fitProblem = state.problem.fitProblem
@@ -55,7 +60,7 @@ async def get_plot_data(view: str = "linear"):
         assert isinstance(model, ExperimentBase)
         theory = model.reflectivity()
         probe = model.probe
-        probe_data = get_probe_data(theory, probe, model._substrate, model._surface)
+        probe_data = get_probe_data(theory, probe, model._substrate, model._surface, include_data=include_data)
         plotdata.append(probe_data)
 
     return to_json_compatible_dict(result)
@@ -87,7 +92,7 @@ async def get_profile_plots(model_specs: List[ModelSpec]):
     return output
 
 
-def get_single_probe_data(theory, probe, substrate=None, surface=None, polarization=""):
+def get_single_probe_data(theory, probe, substrate=None, surface=None, polarization="", include_data=True):
     fresnel_calculator = probe.fresnel(substrate, surface)
     direction_multiplier = -1.0 if probe.back_reflectivity else 1.0
     calc_Q = probe.calc_Q
@@ -99,14 +104,12 @@ def get_single_probe_data(theory, probe, substrate=None, surface=None, polarizat
         # Saving interpolated data
         output = dict(Q=Q, theory=R, fresnel=np.interp(Q, probe.Q, FQ))
     elif getattr(probe, "R", None) is not None:
-        output = dict(
-            Q=probe.Q,
-            dQ=probe.dQ,
-            R=probe.R,
-            dR=probe.dR,
-            theory=R,
-            fresnel=FQ,
-        )
+        output = dict(Q=probe.Q, dQ=probe.dQ, theory=R, fresnel=FQ)
+        if include_data:
+            # R and dR are the measured values; they never change during a fit,
+            # so they can be omitted from per-update payloads (see get_plot_data).
+            output["R"] = probe.R
+            output["dR"] = probe.dR
     else:
         output = dict(Q=probe.Q, dQ=probe.dQ, theory=R, fresnel=FQ)
     output["background"] = probe.background.value
@@ -116,17 +119,17 @@ def get_single_probe_data(theory, probe, substrate=None, surface=None, polarizat
     return output
 
 
-def get_probe_data(theory, probe, substrate=None, surface=None):
+def get_probe_data(theory, probe, substrate=None, surface=None, include_data=True):
     if isinstance(probe, PolarizedNeutronProbe):
         output = []
         for xsi, xsi_th, suffix in zip(probe.xs, theory, ("--", "-+", "+-", "++")):
             if xsi is not None:
-                output.append(get_single_probe_data(xsi_th, xsi, substrate, surface, suffix))
+                output.append(get_single_probe_data(xsi_th, xsi, substrate, surface, suffix, include_data=include_data))
         return output
     elif isinstance(probe, ProbeSet):
-        return [get_single_probe_data(t, p, substrate, surface) for p, t in probe.parts(theory)]
+        return [get_single_probe_data(t, p, substrate, surface, include_data=include_data) for p, t in probe.parts(theory)]
     else:
-        return [get_single_probe_data(theory, probe, substrate, surface)]
+        return [get_single_probe_data(theory, probe, substrate, surface, include_data=include_data)]
 
 
 @register

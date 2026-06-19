@@ -5,7 +5,12 @@ import type { AsyncSocket } from "bumps-webview-client/src/asyncSocket";
 import { configWithSVGDownloadButton } from "bumps-webview-client/src/plotly_extras";
 import { setupDrawLoop } from "bumps-webview-client/src/setupDrawLoop";
 import * as Plotly from "plotly.js/lib/core";
+import scattergl from "plotly.js/lib/scattergl";
 import { COLORS } from "../colors";
+
+// scattergl (WebGL) is not part of the minimal plotly core build; register it
+// so traces can opt into GPU rendering for large datasets.
+Plotly.register([scattergl]);
 
 // const title = "Reflectivity";
 const plot_div = ref<HTMLDivElement | null>(null);
@@ -18,12 +23,20 @@ const log_x = ref(false);
 const show_resolution = ref(true);
 const apply_corrections = ref(true);
 const show_residuals = ref(false);
+const use_webgl = ref(true);
 
 const props = defineProps<{
   socket: AsyncSocket;
 }>();
 
 setupDrawLoop("updated_parameters", props.socket, fetch_and_draw);
+
+// The measured data (R, dR) does not change during a fit, so it is fetched once
+// and cached; subsequent updates request theory-only payloads (include_data=false)
+// and reuse the cached measured values. Reset the cache when a new model loads.
+props.socket.on("model_loaded", () => {
+  plot_data.value = [];
+});
 
 // Resize the plot only when its container actually changes size (panel/tab/window),
 // rather than after every data redraw. `responsive: true` only covers window
@@ -348,19 +361,69 @@ function generate_new_traces(model_data: ModelData[][], view: ReflectivityPlot, 
   return { theory_traces, data_traces, xaxis_label, yaxis_label };
 }
 
-async function fetch_and_draw() {
-  const payload = (await props.socket.asyncEmit("get_plot_data", "linear")) as {
-    plotdata: ModelData[][];
-    chisq: string;
-  };
-  if (payload?.plotdata == null) {
-    // clear plot and return if no plot data is available
-    if (plot_div.value) {
-      await Plotly.purge(plot_div.value);
+type PlotPayload = { plotdata: ModelData[][]; chisq: string } | null;
+
+/**
+ * Copy the static measured arrays (R, dR) from a cached full payload into an
+ * incoming theory-only payload, matching by position. Returns null if the
+ * structures differ (e.g. the model or point count changed), signalling that a
+ * fresh full fetch is required.
+ */
+function merge_measured_data(cached: ModelData[][], incoming: ModelData[][]): ModelData[][] | null {
+  if (cached.length !== incoming.length) {
+    return null;
+  }
+  for (let i = 0; i < incoming.length; i++) {
+    if (cached[i].length !== incoming[i].length) {
+      return null;
     }
+    for (let j = 0; j < incoming[i].length; j++) {
+      const cached_xs = cached[i][j];
+      const incoming_xs = incoming[i][j];
+      if (cached_xs.R !== undefined) {
+        if (cached_xs.R.length !== incoming_xs.theory.length) {
+          return null; // point count changed; cache is stale
+        }
+        incoming_xs.R = cached_xs.R;
+        incoming_xs.dR = cached_xs.dR;
+      }
+    }
+  }
+  return incoming;
+}
+
+async function clear_plot() {
+  plot_data.value = [];
+  if (plot_div.value) {
+    await Plotly.purge(plot_div.value);
+  }
+}
+
+async function fetch_and_draw() {
+  const have_cache = plot_data.value.length > 0;
+  // Fetch the full payload the first time; afterwards omit the static measured
+  // data (include_data=false) and reuse the cached R/dR.
+  let payload = (await props.socket.asyncEmit("get_plot_data", "linear", !have_cache)) as PlotPayload;
+  if (payload?.plotdata == null) {
+    await clear_plot();
     return;
   }
-  plot_data.value = payload.plotdata;
+  let incoming = payload.plotdata;
+  if (have_cache) {
+    const merged = merge_measured_data(plot_data.value, incoming);
+    if (merged === null) {
+      // Structure changed since the cache was populated; refetch the full data.
+      payload = (await props.socket.asyncEmit("get_plot_data", "linear", true)) as PlotPayload;
+      if (payload?.plotdata == null) {
+        await clear_plot();
+        return;
+      }
+      incoming = payload.plotdata;
+    } else {
+      incoming = merged;
+    }
+  }
+  plot_data.value = incoming;
   chisq_str.value = payload.chisq;
   await draw_plot();
 }
@@ -394,6 +457,12 @@ async function draw_plot() {
     reflectivity_type.value,
     show_residuals.value
   );
+  // Opt traces into WebGL (scattergl) or SVG (scatter) rendering. scattergl is
+  // much faster for large datasets; error bars are still drawn as an SVG overlay.
+  const trace_type = use_webgl.value ? "scattergl" : "scatter";
+  for (const trace of [...theory_traces, ...data_traces]) {
+    trace.type = trace_type;
+  }
   const layout: Partial<Plotly.Layout> = {
     uirevision: reflectivity_type.value,
     xaxis: {
@@ -575,6 +644,12 @@ function interp(x: number[], xp: number[], fp: number[]): number[] {
           class="form-check-label"
           title="Apply background and intensity corrections to data instead of theory"
           >R<sub>corr</sub></label
+        >
+      </div>
+      <div class="col-auto form-check my-2">
+        <input id="use_webgl" v-model="use_webgl" type="checkbox" class="form-check-input" @change="draw_plot" />
+        <label for="use_webgl" class="form-check-label" title="Use WebGL rendering (faster for large datasets)"
+          >WebGL</label
         >
       </div>
     </div>
