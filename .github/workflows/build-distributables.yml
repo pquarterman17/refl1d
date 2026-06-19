@@ -28,10 +28,19 @@ jobs:
     steps:
     - uses: actions/checkout@v6
       with:
-        # One-off: build the code the release actually represents
-        # (feat/plot-webgl-payload via the tag), not master.
-        ref: v1.0.2a0+pq2
+        # One-off: build the latest feat/plot-webgl-payload (CSV export + the new
+        # export-feedback UI) so the refreshed pq2 installer includes both.
+        ref: feat/plot-webgl-payload
         fetch-depth: 0
+
+    - name: Pin clean pq2 version for this rebuild
+      run: |
+        # The remote v1.0.2a0+pq2 tag can't be moved here, so force the local
+        # tag onto this HEAD. versioningit then reports a clean "1.0.2a0+pq2",
+        # so the installer filename matches and REPLACES the existing asset
+        # (update-release deletes same-named assets) instead of adding a second.
+        git tag -f v1.0.2a0+pq2 HEAD
+        git describe --tags
 
     - uses: conda-incubator/setup-miniconda@v4
       with:
@@ -194,3 +203,25 @@ jobs:
         tag: v1.0.2a0+pq2
         files: |
           ${{ env.DISTRIBUTABLES }}
+
+    - name: Refresh release notes
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # update-release does not touch the body of an existing release, so use
+        # gh to add a note about the new export-feedback behaviour in this rebuild.
+        cat > release-notes.md <<'EOF'
+        Fork test build from `feat/plot-webgl-payload`. **Windows only**, unsigned (SmartScreen → More info → Run anyway). Download the `*-Windows-x86_64-installer.exe` asset below.
+
+        ### New since v1.0.2a0+pq1
+        - **Excel-friendly parameter export** — exporting results now also writes `<model>-pars.csv` (parameter, value, uncertainty, bounds, free/fixed, 68% CI), openable directly in a spreadsheet.
+        - **Export feedback in the UI** — the parameter-CSV step now reports its result: a confirmation when `<model>-pars.csv` is written, and a visible error notification (instead of a silent server-log entry) if it can't be written.
+        - **Synced with upstream** `reflectometry/refl1d` v1.0.2b1: alignment point z=0 (#373), repeated magnetic layers (#377), and **bumps 1.0.5rc2**.
+
+        ### Carried from pq1
+        - WebGL reflectivity plot + theory-only update payload (plot performance).
+        - Webview file browser with drive navigation and the network-drive stall fix.
+
+        See the [fork wiki](https://github.com/pquarterman17/refl1d/wiki) for install and usage.
+        EOF
+        gh release edit v1.0.2a0+pq2 --repo "${{ github.repository }}" --notes-file release-notes.md
