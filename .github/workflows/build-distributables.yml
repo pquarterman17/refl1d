@@ -10,6 +10,9 @@ env:
   PACKAGE_NAME: refl1d
   PYTHON_VERSION: 3.12
 
+permissions:
+  contents: write
+
 jobs:
   build_and_publish:
     runs-on: ${{ matrix.config.os }}
