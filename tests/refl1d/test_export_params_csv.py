@@ -11,7 +11,6 @@ Covers :func:`refl1d.webview.server.export_csv.write_parameters_csv`:
 import csv
 
 import numpy as np
-import pytest
 
 from bumps.fitproblem import FitProblem
 
@@ -101,7 +100,8 @@ def test_csv_written_even_when_export_fit_raises(tmp_path, monkeypatch):
     unguarded uncertainty/error plotting last. On a large simultaneous DREAM fit
     that tail can raise *after* the regular files already landed -- which used to
     skip the parameter CSV entirely. The CSV is logically independent, so it must
-    still be written, and the original export error must still surface.
+    still be written, and the export failure must be reported (not swallowed,
+    not allowed to abort the CSV).
     """
 
     def boom(path, problem, fit, serializer, basename):
@@ -111,9 +111,14 @@ def test_csv_written_even_when_export_fit_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api, "export_fit", boom)
 
-    with pytest.raises(RuntimeError, match="simulated calc_errors failure"):
-        api._export_with_csv(str(tmp_path), _make_problem(), None, "dataclass")
+    csv_path, csv_error, export_error = api._export_with_csv(
+        str(tmp_path), _make_problem(), None, "dataclass"
+    )
 
-    csvs = list(tmp_path.glob("*-pars.csv"))
-    assert csvs, f"CSV was not salvaged; dir held {[p.name for p in tmp_path.iterdir()]}"
-    assert _read_csv(csvs[0])[0] == HEADER
+    # CSV salvaged despite the bundle failure ...
+    assert csv_path is not None and csv_path.exists()
+    assert csv_error is None
+    assert _read_csv(csv_path)[0] == HEADER
+    # ... and the bundle failure is reported back for the UI, not lost.
+    assert export_error is not None
+    assert "simulated calc_errors failure" in export_error
