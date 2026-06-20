@@ -107,7 +107,39 @@ def _free_uncertainty(problem, fit) -> Tuple[List, List, List]:
     return stderr, ci_lo, ci_hi
 
 
+def _model_map(problem) -> dict:
+    """Map ``id(parameter) -> model label`` so each CSV row can name its dataset.
+
+    In a simultaneous (multi-dataset) fit, parameters from different models often
+    share a name (six ``film thickness`` rows, etc.); the model label is what
+    tells them apart. A parameter tied across several models is labelled
+    ``"shared"``. Best-effort: returns ``{}`` if the model structure can't be
+    walked, leaving the column blank rather than failing the export.
+    """
+    mapping: dict = {}
+    try:
+        models = list(problem.models)
+    except Exception:
+        return mapping
+    for i, m in enumerate(models):
+        label = getattr(m, "name", None) or f"model{i}"
+        try:
+            leaves = unique(m.parameters())
+        except Exception:
+            continue
+        for p in leaves:
+            if not isinstance(p, Parameter):
+                continue
+            prev = mapping.get(id(p))
+            if prev is None:
+                mapping[id(p)] = label
+            elif prev != label:
+                mapping[id(p)] = "shared"
+    return mapping
+
+
 HEADER = [
+    "model",
     "parameter",
     "value",
     "uncertainty",
@@ -129,6 +161,7 @@ def write_parameters_csv(problem, fit, path: Path | str) -> Path:
     free = list(problem._parameters)
     free_ids = {id(p) for p in free}
     stderr, ci_lo, ci_hi = _free_uncertainty(problem, fit)
+    model_of = _model_map(problem)
 
     rows: List[List[str]] = []
 
@@ -137,6 +170,7 @@ def write_parameters_csv(problem, fit, path: Path | str) -> Path:
         lo, hi = _limits(p)
         rows.append(
             [
+                model_of.get(id(p), ""),
                 getattr(p, "name", f"p{i}"),
                 _g(_value(p)),
                 _g(stderr[i]),
@@ -156,6 +190,7 @@ def write_parameters_csv(problem, fit, path: Path | str) -> Path:
             continue
         rows.append(
             [
+                model_of.get(id(p), ""),
                 getattr(p, "name", "?"),
                 _g(_value(p)),
                 "",

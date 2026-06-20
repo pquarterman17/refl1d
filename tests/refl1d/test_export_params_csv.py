@@ -44,6 +44,15 @@ def _read_csv(path):
         return list(csv.reader(fd))
 
 
+# Column accessors by name so the tests survive column additions/reordering.
+def _col(row, name):
+    return row[HEADER.index(name)]
+
+
+def _by_name(rows):
+    return {_col(r, "parameter"): r for r in rows}
+
+
 def test_header(tmp_path):
     out = write_parameters_csv(_make_problem(), None, tmp_path / "model-pars.csv")
     rows = _read_csv(out)
@@ -52,7 +61,7 @@ def test_header(tmp_path):
 
 def test_free_params_have_bounds_and_state(tmp_path):
     out = write_parameters_csv(_make_problem(), None, tmp_path / "model-pars.csv")
-    by_name = {r[0]: r for r in _read_csv(out)[1:]}
+    by_name = _by_name(_read_csv(out)[1:])
 
     for name, value, lo, hi in [
         ("Ni thickness", 100.0, 50.0, 150.0),
@@ -60,19 +69,19 @@ def test_free_params_have_bounds_and_state(tmp_path):
     ]:
         assert name in by_name, f"{name} missing from CSV"
         row = by_name[name]
-        assert float(row[1]) == value  # value
-        assert float(row[3]) == lo  # lower_bound
-        assert float(row[4]) == hi  # upper_bound
-        assert row[5] == "free"  # state
+        assert float(_col(row, "value")) == value
+        assert float(_col(row, "lower_bound")) == lo
+        assert float(_col(row, "upper_bound")) == hi
+        assert _col(row, "state") == "free"
         # Covariance gives a finite uncertainty for this well-posed problem.
-        assert row[2] != "", f"{name} missing uncertainty"
-        float(row[2])  # parses as a number
+        assert _col(row, "uncertainty") != "", f"{name} missing uncertainty"
+        float(_col(row, "uncertainty"))  # parses as a number
 
 
 def test_fixed_params_present_and_blank(tmp_path):
     out = write_parameters_csv(_make_problem(), None, tmp_path / "model-pars.csv")
     rows = _read_csv(out)[1:]
-    fixed = {r[0]: r for r in rows if r[5] == "fixed"}
+    fixed = _by_name([r for r in rows if _col(r, "state") == "fixed"])
 
     # intensity/background are fixed probe parameters; for a named probe they are
     # suffixed with the probe name (e.g. "intensity SampleA").
@@ -81,16 +90,65 @@ def test_fixed_params_present_and_blank(tmp_path):
 
     # A fixed row has blank uncertainty, bounds, and CI columns.
     fixed_row = next(iter(fixed.values()))
-    assert fixed_row[2] == ""  # uncertainty
-    assert fixed_row[3] == "" and fixed_row[4] == ""  # bounds
-    assert fixed_row[6] == "" and fixed_row[7] == ""  # ci68
+    assert _col(fixed_row, "uncertainty") == ""
+    assert _col(fixed_row, "lower_bound") == "" and _col(fixed_row, "upper_bound") == ""
+    assert _col(fixed_row, "ci68_low") == "" and _col(fixed_row, "ci68_high") == ""
 
 
 def test_free_params_listed_before_fixed(tmp_path):
     out = write_parameters_csv(_make_problem(), None, tmp_path / "model-pars.csv")
-    states = [r[5] for r in _read_csv(out)[1:]]
+    states = [_col(r, "state") for r in _read_csv(out)[1:]]
     first_fixed = states.index("fixed")
     assert all(s == "free" for s in states[:first_fixed]), states
+
+
+def _make_multimodel_problem():
+    """Two datasets fit simultaneously: a shared film rho, per-model thickness.
+
+    Both models reuse the same layer/material names, so the parameter names
+    collide ("film thickness" appears in each) -- the model column is what
+    disambiguates them.
+    """
+    film = SLD("film", rho=4.0)
+    film.rho.range(2, 6)  # ONE shared free parameter across both models
+
+    def one(idx):
+        T = np.linspace(0.5, 5.0, 20)
+        probe = NeutronProbe(
+            T=T,
+            dT=0.01 * np.ones_like(T),
+            L=5.0 * np.ones_like(T),
+            dL=0.1 * np.ones_like(T),
+            data=(np.exp(-T), 0.05 * np.exp(-T)),
+            name=f"Sample{idx}",
+        )
+        sample = silicon(0, 5) | film(100, 5) | air
+        sample[1].thickness.range(50, 150)  # same name "film thickness" in each model
+        return Experiment(sample=sample, probe=probe, name=f"m{idx}")
+
+    return FitProblem([one(0), one(1)])
+
+
+def test_model_column_disambiguates_simultaneous_fit(tmp_path):
+    out = write_parameters_csv(_make_multimodel_problem(), None, tmp_path / "model-pars.csv")
+    rows = _read_csv(out)
+    assert rows[0][0] == "model"  # model is the leading column
+
+    body = rows[1:]
+    # The same-named per-model thickness appears once per model, each tagged.
+    thick = [r for r in body if _col(r, "parameter") == "film thickness"]
+    assert {_col(r, "model") for r in thick} == {"m0", "m1"}, thick
+
+    # The tied film rho appears once, labelled shared.
+    rho = [r for r in body if _col(r, "parameter") == "film rho"]
+    assert len(rho) == 1 and _col(rho[0], "model") == "shared", rho
+
+
+def test_model_column_populated_for_single_model(tmp_path):
+    # Every row gets a non-blank model label, even for a single (unnamed) model.
+    out = write_parameters_csv(_make_problem(), None, tmp_path / "model-pars.csv")
+    models = {_col(r, "model") for r in _read_csv(out)[1:]}
+    assert len(models) == 1 and "" not in models, models
 
 
 def test_csv_written_even_when_export_fit_raises(tmp_path, monkeypatch):
