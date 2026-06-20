@@ -275,17 +275,37 @@ async def export_results(export_path: Union[str, List[str]] = ""):
 
 
 def _export_with_csv(path, problem, fit, serializer, basename=None):
-    # Standard bumps bundle first (.par, .out, plots, -fit.json, ...).
-    export_fit(path, problem, fit, serializer, basename)
-    # Then the fork's Excel-friendly parameter CSV, using the same basename logic.
+    # Derive the basename up front (mirrors bumps' export_fit logic) and pass it
+    # explicitly to both writers. This guarantees the CSV sits next to the rest of
+    # the bundle with the same prefix, and -- crucially -- lets us write the CSV
+    # even when export_fit dies partway through.
     if not basename:
-        problem_name = getattr(problem, "name", "model")
-        problem_path = getattr(problem, "path", f"{problem_name}.py")
+        problem_name = getattr(problem, "name", None) or "model"
+        problem_path = getattr(problem, "path", None) or f"{problem_name}.py"
         basename = Path(problem_path).with_suffix("").name
+
+    # Standard bumps bundle (.par, .out, plots, -fit.json, ...). The regular files
+    # are written early; the uncertainty/error plots run last and are NOT guarded
+    # by bumps. On a large simultaneous DREAM fit that tail can raise after the
+    # regular files already landed -- which previously skipped the CSV entirely.
+    export_error: Optional[Exception] = None
     try:
-        write_parameters_csv(problem, fit, Path(path) / f"{basename}-pars.csv")
+        export_fit(path, problem, fit, serializer, basename)
+    except Exception as exc:
+        export_error = exc
+        logger.error(f"Standard export bundle failed partway: {exc}", exc_info=True)
+
+    # The CSV is logically independent of export_fit -- always attempt it.
+    try:
+        out = write_parameters_csv(problem, fit, Path(path) / f"{basename}-pars.csv")
+        logger.info(f"Wrote fit-parameter CSV: {out}")
     except Exception as exc:  # never let the CSV break the rest of the export
-        logger.error(f"Error writing {basename}-pars.csv: {exc}")
+        logger.error(f"Error writing {basename}-pars.csv: {exc}", exc_info=True)
+
+    # Re-surface the original export failure after the CSV has been salvaged, so
+    # the user is still told the standard bundle was incomplete.
+    if export_error is not None:
+        raise export_error
 
 
 @lru_cache(maxsize=1)

@@ -34,6 +34,21 @@ def _g(x: Optional[float]) -> str:
         return ""
 
 
+def _value(p) -> Optional[float]:
+    """Read ``p.value`` defensively.
+
+    For tied/expression parameters (common in simultaneous fits) ``.value`` is a
+    property that evaluates the expression and may raise something other than
+    ``AttributeError`` -- which a plain ``getattr(p, "value", None)`` would let
+    through. Return ``None`` on any failure so one odd parameter can't abort the
+    whole CSV.
+    """
+    try:
+        return p.value
+    except Exception:
+        return None
+
+
 def _limits(p) -> Tuple[Optional[float], Optional[float]]:
     """Return finite (lower, upper) bounds for a parameter, or None where unbounded."""
     try:
@@ -123,7 +138,7 @@ def write_parameters_csv(problem, fit, path: Path | str) -> Path:
         rows.append(
             [
                 getattr(p, "name", f"p{i}"),
-                _g(getattr(p, "value", None)),
+                _g(_value(p)),
                 _g(stderr[i]),
                 _g(lo),
                 _g(hi),
@@ -142,7 +157,7 @@ def write_parameters_csv(problem, fit, path: Path | str) -> Path:
         rows.append(
             [
                 getattr(p, "name", "?"),
-                _g(getattr(p, "value", None)),
+                _g(_value(p)),
                 "",
                 "",
                 "",

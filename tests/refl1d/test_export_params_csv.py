@@ -11,6 +11,7 @@ Covers :func:`refl1d.webview.server.export_csv.write_parameters_csv`:
 import csv
 
 import numpy as np
+import pytest
 
 from bumps.fitproblem import FitProblem
 
@@ -18,6 +19,7 @@ from refl1d.experiment import Experiment
 from refl1d.probe.probe import NeutronProbe
 from refl1d.sample.material import SLD
 from refl1d.sample.materialdb import air, silicon
+from refl1d.webview.server import api
 from refl1d.webview.server.export_csv import HEADER, write_parameters_csv
 
 
@@ -90,3 +92,28 @@ def test_free_params_listed_before_fixed(tmp_path):
     states = [r[5] for r in _read_csv(out)[1:]]
     first_fixed = states.index("fixed")
     assert all(s == "free" for s in states[:first_fixed]), states
+
+
+def test_csv_written_even_when_export_fit_raises(tmp_path, monkeypatch):
+    """The CSV must survive a partial bumps export.
+
+    ``export_fit`` writes the regular bundle (.par/.out/plots) early, then does
+    unguarded uncertainty/error plotting last. On a large simultaneous DREAM fit
+    that tail can raise *after* the regular files already landed -- which used to
+    skip the parameter CSV entirely. The CSV is logically independent, so it must
+    still be written, and the original export error must still surface.
+    """
+
+    def boom(path, problem, fit, serializer, basename):
+        # Emulate the regular files landing before the failure.
+        (tmp_path / f"{basename}.par").write_text("regular file\n")
+        raise RuntimeError("simulated calc_errors failure on uncertainty plots")
+
+    monkeypatch.setattr(api, "export_fit", boom)
+
+    with pytest.raises(RuntimeError, match="simulated calc_errors failure"):
+        api._export_with_csv(str(tmp_path), _make_problem(), None, "dataclass")
+
+    csvs = list(tmp_path.glob("*-pars.csv"))
+    assert csvs, f"CSV was not salvaged; dir held {[p.name for p in tmp_path.iterdir()]}"
+    assert _read_csv(csvs[0])[0] == HEADER
