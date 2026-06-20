@@ -122,3 +122,28 @@ def test_csv_written_even_when_export_fit_raises(tmp_path, monkeypatch):
     # ... and the bundle failure is reported back for the UI, not lost.
     assert export_error is not None
     assert "simulated calc_errors failure" in export_error
+
+
+def test_csv_written_when_export_fit_dies_before_mkdir(tmp_path, monkeypatch):
+    """The CSV must be salvaged even into a directory export_fit never created.
+
+    bumps' ``export_fit`` creates the output dir as its first step; the salvage
+    code must not depend on that having run. Here ``export_fit`` raises before
+    creating anything and the target is a not-yet-existing subdirectory, so the
+    CSV writer must create the dir itself.
+    """
+    target = tmp_path / "subdir_that_does_not_exist_yet"
+
+    def boom_before_mkdir(path, problem, fit, serializer, basename):
+        raise RuntimeError("crashed before mkdir ran")
+
+    monkeypatch.setattr(api, "export_fit", boom_before_mkdir)
+
+    csv_path, csv_error, export_error = api._export_with_csv(
+        str(target), _make_problem(), None, "dataclass"
+    )
+
+    assert csv_error is None, csv_error
+    assert csv_path is not None and csv_path.exists()
+    assert csv_path.parent == target
+    assert export_error is not None and "before mkdir" in export_error

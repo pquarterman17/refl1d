@@ -324,9 +324,12 @@ def _export_with_csv(path, problem, fit, serializer, basename=None):
         export_error = f"Standard export bundle failed partway: {exc}"
         logger.error(export_error, exc_info=True)
 
-    # The CSV is logically independent of export_fit -- always attempt it.
+    # The CSV is logically independent of export_fit -- always attempt it. Create
+    # the output dir ourselves rather than relying on export_fit's mkdir, so the
+    # CSV is still written when export_fit dies before (or at) that step.
     csv_path = Path(path) / f"{basename}-pars.csv"
     try:
+        Path(path).mkdir(parents=True, exist_ok=True)
         write_parameters_csv(problem, fit, csv_path)
         logger.info(f"Wrote fit-parameter CSV: {csv_path}")
         return csv_path, None, export_error
