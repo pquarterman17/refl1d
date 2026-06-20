@@ -172,19 +172,15 @@ jobs:
         name: artifacts-${{ matrix.config.os }}-${{ matrix.config.py }}
         path: artifacts/*
 
-    - name: Enumerate artifacts
-      run: |
-        # Collect the distributables
-        {
-          echo 'DISTRIBUTABLES<<EOF'
-          ls artifacts/*
-          echo EOF
-        } >> "$GITHUB_ENV"
-
-    - name: Update current release
+    - name: Attach distributables to the release
+      # Only on release-triggered runs (the tag's release already exists).
+      # Use `gh release upload` rather than a third-party action: it handles
+      # PEP 440 local-version tags like `v1.0.2+pq3` (the `+` 404'd the old
+      # johnwbyrd/update-release@v1.0.0) and leaves the release notes untouched.
       if: startsWith(github.ref, 'refs/tags')
-      uses: johnwbyrd/update-release@v1.0.0
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        files: |
-          ${{ env.DISTRIBUTABLES }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload "${{ github.ref_name }}" artifacts/* \
+          --clobber --repo "${{ github.repository }}"
