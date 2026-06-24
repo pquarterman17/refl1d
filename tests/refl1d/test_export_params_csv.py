@@ -19,7 +19,11 @@ from refl1d.probe.probe import NeutronProbe
 from refl1d.sample.material import SLD
 from refl1d.sample.materialdb import air, silicon
 from refl1d.webview.server import api
-from refl1d.webview.server.export_csv import HEADER, write_parameters_csv
+from refl1d.webview.server.export_csv import (
+    HEADER,
+    write_parameters_by_dataset_csv,
+    write_parameters_csv,
+)
 
 
 def _make_problem():
@@ -169,7 +173,7 @@ def test_csv_written_even_when_export_fit_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api, "export_fit", boom)
 
-    csv_path, csv_error, export_error = api._export_with_csv(
+    csv_path, _by_dataset, csv_error, export_error = api._export_with_csv(
         str(tmp_path), _make_problem(), None, "dataclass"
     )
 
@@ -197,7 +201,7 @@ def test_csv_written_when_export_fit_dies_before_mkdir(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api, "export_fit", boom_before_mkdir)
 
-    csv_path, csv_error, export_error = api._export_with_csv(
+    csv_path, _by_dataset, csv_error, export_error = api._export_with_csv(
         str(target), _make_problem(), None, "dataclass"
     )
 
@@ -205,3 +209,78 @@ def test_csv_written_when_export_fit_dies_before_mkdir(tmp_path, monkeypatch):
     assert csv_path is not None and csv_path.exists()
     assert csv_path.parent == target
     assert export_error is not None and "before mkdir" in export_error
+
+
+# --- wide per-dataset comparison table (fork feature) -----------------------
+
+
+def test_by_dataset_csv_layout(tmp_path):
+    out = write_parameters_by_dataset_csv(_make_multimodel_problem(), None, tmp_path / "m-by-dataset.csv")
+    assert out is not None
+    rows = _read_csv(out)
+    header = rows[0]
+
+    # datafile first, then a value+error column PAIR per parameter.
+    assert header[0] == "datafile"
+    assert "film thickness" in header and "film thickness error" in header
+    ti = header.index("film thickness")
+    assert header[ti + 1] == "film thickness error"  # error follows its value
+
+    body = rows[1:]
+    assert {r[0] for r in body} == {"m0", "m1"}, body  # one row per dataset
+
+    # film rho is shared -> identical value on both rows, and (being free) has an error.
+    rho_i = header.index("film rho")
+    assert len({r[rho_i] for r in body}) == 1
+    assert all(r[rho_i + 1] != "" for r in body)
+
+    # each dataset carries its own fitted thickness value + error.
+    for r in body:
+        assert r[ti] != "" and r[ti + 1] != ""
+
+
+def test_by_dataset_csv_skipped_for_single_model(tmp_path):
+    target = tmp_path / "single-by-dataset.csv"
+    assert write_parameters_by_dataset_csv(_make_problem(), None, target) is None
+    assert not target.exists()  # writes nothing for a single-dataset fit
+
+
+def test_by_dataset_csv_includes_probe_description_and_comment(tmp_path):
+    problem = _make_multimodel_problem()
+    # description is a real probe field; comment is read defensively (stock Probe
+    # has none) -- set one on a single model to prove per-cell population.
+    # problem.models is a generator, so materialize once before indexing.
+    models = list(problem.models)
+    for i, m in enumerate(models):
+        m.probe.description = f"run{i} 300K"
+    models[0].probe.comment = "outlier removed"
+
+    rows = _read_csv(write_parameters_by_dataset_csv(problem, None, tmp_path / "m-by-dataset.csv"))
+    header = rows[0]
+    assert header[:3] == ["datafile", "description", "comment"], header
+
+    body = rows[1:]
+    di, ci = header.index("description"), header.index("comment")
+    assert {r[di] for r in body} == {"run0 300K", "run1 300K"}
+    # only one model carries a comment; the other cell is blank.
+    assert sorted(r[ci] for r in body) == ["", "outlier removed"]
+
+
+def test_by_dataset_csv_omits_metadata_columns_when_absent(tmp_path):
+    # The default fixture has no probe description/comment -> no such columns.
+    rows = _read_csv(write_parameters_by_dataset_csv(_make_multimodel_problem(), None, tmp_path / "m.csv"))
+    assert "description" not in rows[0]
+    assert "comment" not in rows[0]
+    assert rows[0][0] == "datafile"
+
+
+def test_export_with_csv_writes_by_dataset_for_multimodel(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "export_fit", lambda *a, **k: None)  # skip the heavy bundle
+    csv_path, by_dataset_path, csv_error, export_error = api._export_with_csv(
+        str(tmp_path), _make_multimodel_problem(), None, "dataclass", basename="multi"
+    )
+    assert csv_error is None and export_error is None
+    assert csv_path is not None and csv_path.name == "multi-pars.csv"
+    assert by_dataset_path is not None and by_dataset_path.exists()
+    assert by_dataset_path.name == "multi-by-dataset.csv"
+    assert _read_csv(by_dataset_path)[0][0] == "datafile"

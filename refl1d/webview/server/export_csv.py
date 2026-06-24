@@ -208,3 +208,125 @@ def write_parameters_csv(problem, fit, path: Path | str) -> Path:
         writer.writerows(rows)
 
     return path
+
+
+def _oneline(s) -> str:
+    """Collapse a possibly multi-line metadata string to a single trimmed line."""
+    return " ".join(str(s).splitlines()).strip() if s else ""
+
+
+def _dataset_label(m, idx: int) -> str:
+    """Best 'datafile name' for a model: the probe's filename (basename) if it
+    loaded from a file, else the model/probe name, else a positional fallback."""
+    probe = getattr(m, "probe", None)
+    fname = getattr(probe, "filename", None)
+    if fname:
+        return Path(str(fname)).name
+    return getattr(m, "name", None) or getattr(probe, "name", None) or f"model{idx}"
+
+
+def _probe_meta(m) -> Tuple[str, str]:
+    """(description, comment) from the model's probe, blank when absent.
+
+    The stock refl1d ``Probe`` carries ``description`` but no ``comment``
+    attribute; ``comment`` is read defensively so a loader/metadata that adds one
+    is picked up, and the column is simply blank (and later omitted) otherwise.
+    """
+    probe = getattr(m, "probe", None)
+    return _oneline(getattr(probe, "description", None)), _oneline(getattr(probe, "comment", None))
+
+
+def write_parameters_by_dataset_csv(problem, fit, path: Path | str) -> Optional[Path]:
+    """Write a wide per-dataset comparison table (fork feature).
+
+    One row per model (dataset), two columns per parameter -- ``value`` and
+    ``<name> error`` -- so the same model fit across several datasets can be
+    compared at a glance::
+
+        datafile,   description, film thickness, film thickness error, film rho, film rho error
+        data_A.dat, run1 300K,   100.2,          0.5,                  2.07,     0.01
+        data_B.dat, run2 300K,   98.7,           0.4,                  2.07,     0.01
+
+    After ``datafile`` come optional ``description`` and ``comment`` columns,
+    taken from each dataset's probe -- included only when at least one dataset
+    actually has that field. Parameter columns are the ordered union of names
+    across models (so "similar" models line up, and a parameter missing from one
+    model leaves a blank cell). Both free and fixed parameters are included;
+    fixed parameters get a blank error. Tied/shared parameters repeat their value
+    on every row that uses them.
+
+    Only meaningful for simultaneous (multi-dataset) fits: returns ``None``
+    without writing when the problem has fewer than two models.
+    """
+    path = Path(path)
+    try:
+        models = list(problem.models)
+    except Exception:
+        return None
+    if len(models) < 2:
+        return None
+
+    # Per free-parameter stderr, keyed by id() so any parameter we meet while
+    # walking a model can look up its error (fixed params won't be present).
+    free = list(problem._parameters)
+    stderr, _ci_lo, _ci_hi = _free_uncertainty(problem, fit)
+    err_by_id = {id(p): stderr[i] for i, p in enumerate(free) if i < len(stderr)}
+
+    # Walk each model: capture its datafile label + probe metadata, record
+    # {name: (value, err)}, and build the ordered union of names (first model's
+    # order first, then any newcomers).
+    col_names: List[str] = []
+    seen = set()
+    per_model: List[Tuple[str, str, str, dict]] = []
+    any_desc = any_comment = False
+    for i, m in enumerate(models):
+        label = _dataset_label(m, i)
+        desc, comment = _probe_meta(m)
+        any_desc = any_desc or bool(desc)
+        any_comment = any_comment or bool(comment)
+        try:
+            leaves = unique(m.parameters())
+        except Exception:
+            leaves = []
+        pmap: dict = {}
+        for p in leaves:
+            if not isinstance(p, Parameter):
+                continue
+            name = getattr(p, "name", None)
+            if not name or name in pmap:  # first occurrence within a model wins
+                continue
+            pmap[name] = (_value(p), err_by_id.get(id(p)))
+            if name not in seen:
+                seen.add(name)
+                col_names.append(name)
+        per_model.append((label, desc, comment, pmap))
+
+    # description / comment columns appear only if some dataset populated them.
+    header = ["datafile"]
+    if any_desc:
+        header.append("description")
+    if any_comment:
+        header.append("comment")
+    for name in col_names:
+        header.append(name)
+        header.append(f"{name} error")
+
+    rows: List[List[str]] = []
+    for label, desc, comment, pmap in per_model:
+        row = [label]
+        if any_desc:
+            row.append(desc)
+        if any_comment:
+            row.append(comment)
+        for name in col_names:
+            val, err = pmap.get(name, (None, None))
+            row.append(_g(val))
+            row.append(_g(err))
+        rows.append(row)
+
+    with open(path, "w", newline="", encoding="utf-8") as fd:
+        writer = csv.writer(fd)
+        writer.writerow(header)
+        writer.writerows(rows)
+
+    return path

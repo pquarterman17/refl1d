@@ -40,7 +40,7 @@ from refl1d.probe import PolarizedNeutronProbe, ProbeSet
 from .profile_uncertainty import show_errors
 from .profile_plot import plot_multiple_sld_profiles, ModelSpec
 from .scriptify import serialize_fitproblem as scriptify_fitproblem
-from .export_csv import write_parameters_csv
+from .export_csv import write_parameters_by_dataset_csv, write_parameters_csv
 
 # state.problem.serializer = "dataclass"
 
@@ -269,7 +269,9 @@ async def export_results(export_path: Union[str, List[str]] = ""):
     path = Path(*export_path).expanduser().absolute()
     notification_id = await add_notification(content=f"<span>{str(path)}</span>", title="Export started", timeout=None)
     try:
-        csv_path, csv_error, export_error = await to_thread(_export_with_csv, path, problem, fit, serializer)
+        csv_path, by_dataset_path, csv_error, export_error = await to_thread(
+            _export_with_csv, path, problem, fit, serializer
+        )
     finally:
         await emit("cancel_notification", notification_id)
 
@@ -288,8 +290,11 @@ async def export_results(export_path: Union[str, List[str]] = ""):
             timeout=10000,
         )
     elif csv_path is not None:
+        names = csv_path.name
+        if by_dataset_path is not None:
+            names += f" + {by_dataset_path.name}"
         await add_notification(
-            content=f"<span>{csv_path.name}</span>",
+            content=f"<span>{names}</span>",
             title="Parameter CSV exported:",
             timeout=3000,
         )
@@ -332,11 +337,24 @@ def _export_with_csv(path, problem, fit, serializer, basename=None):
         Path(path).mkdir(parents=True, exist_ok=True)
         write_parameters_csv(problem, fit, csv_path)
         logger.info(f"Wrote fit-parameter CSV: {csv_path}")
-        return csv_path, None, export_error
     except Exception as exc:  # never let the CSV break the rest of the export
         message = f"Error writing {csv_path.name}: {exc}"
         logger.error(message, exc_info=True)
-        return None, message, export_error
+        return None, None, message, export_error
+
+    # Best-effort wide per-dataset comparison table (simultaneous fits only;
+    # writes nothing and returns None for single-dataset fits). Independent of
+    # the per-parameter CSV -- a failure here must not lose the one above.
+    by_dataset_path = None
+    try:
+        candidate = Path(path) / f"{basename}-by-dataset.csv"
+        if write_parameters_by_dataset_csv(problem, fit, candidate) is not None:
+            by_dataset_path = candidate
+            logger.info(f"Wrote per-dataset CSV: {by_dataset_path}")
+    except Exception as exc:
+        logger.error(f"Error writing {basename}-by-dataset.csv: {exc}", exc_info=True)
+
+    return csv_path, by_dataset_path, None, export_error
 
 
 @lru_cache(maxsize=1)
