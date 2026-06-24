@@ -3,7 +3,19 @@ name: Build conda-packed distribution
 on:
   release:
     types: [published]
+  # Fork: the repo default branch is `master` (upstream), so `release` events
+  # run upstream's workflow, not this one. Tag-push fires THIS file (taken from
+  # the tag's commit) and builds + attaches with only git creds -- no gh
+  # `workflow` scope needed. Keep the tag at the branch HEAD (versioningit).
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to attach the installer + wheel to (e.g. v1.0.2+pq4). Blank = run artifacts only."
+        required: false
+        default: ""
 
 env:
   # Fork build: package the feat/plot-webgl-payload branch (all four plot perf
@@ -188,14 +200,16 @@ jobs:
         path: artifacts/*
 
     - name: Attach distributables to the release
-      # Only on release-triggered runs (the tag's release already exists).
-      # Use `gh release upload` rather than a third-party action: it handles
-      # PEP 440 local-version tags like `v1.0.2+pq3` (the `+` 404'd the old
-      # johnwbyrd/update-release@v1.0.0) and leaves the release notes untouched.
-      if: startsWith(github.ref, 'refs/tags')
+      # Fires on a tag push (github.ref_name = the tag) or a manual dispatch
+      # that supplies release_tag. Uses the in-Actions GITHUB_TOKEN, so no
+      # personal `workflow` scope is needed. `gh release upload` handles PEP 440
+      # local-version tags like `v1.0.2+pq4` (the `+` 404'd the old
+      # johnwbyrd/update-release action) and leaves the release notes untouched.
+      if: startsWith(github.ref, 'refs/tags') || github.event.inputs.release_tag != ''
       shell: bash
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        gh release upload "${{ github.ref_name }}" artifacts/* \
-          --clobber --repo "${{ github.repository }}"
+        TAG="${{ github.event.inputs.release_tag }}"
+        if [ -z "$TAG" ]; then TAG="${{ github.ref_name }}"; fi
+        gh release upload "$TAG" artifacts/* --clobber --repo "${{ github.repository }}"
