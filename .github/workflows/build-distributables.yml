@@ -17,6 +17,12 @@ on:
         required: false
         default: ""
 
+# Fork: the attach step uploads release assets via the in-Actions token, which
+# needs contents:write. Without this the upload 403s ("Resource not accessible
+# by integration") even though the build succeeds.
+permissions:
+  contents: write
+
 env:
   # Fork build: package the feat/plot-webgl-payload branch (all four plot perf
   # changes: #1+#2 redraw fixes, #3 theory-only updates, #4 WebGL). Test build.
