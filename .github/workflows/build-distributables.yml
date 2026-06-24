@@ -44,6 +44,21 @@ jobs:
         conda activate base
         ./extra/build_conda_packed.sh
 
+    - name: Build pip wheel (portable py3-none-any) for the release
+      run: |
+        # Fork: attach a pip-installable wheel alongside the .exe installer.
+        # setup.py only compiles the C++ extension when BUILD_EXTENSION is set,
+        # so this is a portable py3-none-any wheel (default numba backend) that
+        # installs on any OS / Python >=3.10. It lets users `pip install
+        # --upgrade` into an existing (policy-allowed) Python environment
+        # instead of relying on the bundled-app launcher -- which also
+        # overwrites any stale stock `refl1d` that would otherwise shadow it.
+        # The webview client was already built into the tree by
+        # build_conda_packed.sh above, so it is packaged into the wheel.
+        python -m pip install build
+        mkdir -p artifacts
+        python -m build --wheel --outdir artifacts .
+
     - name: Create MacOS App
       if: startsWith(matrix.config.os, 'macos')
       env:
