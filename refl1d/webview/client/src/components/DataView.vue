@@ -9,8 +9,34 @@ import scattergl from "plotly.js/lib/scattergl";
 import { COLORS } from "../colors";
 
 // scattergl (WebGL) is not part of the minimal plotly core build; register it
-// so traces can opt into GPU rendering for large datasets.
-Plotly.register([scattergl]);
+// so traces can opt into GPU rendering for large datasets. Guard the call: if
+// registration ever throws we still want the component module to load (and fall
+// back to SVG rendering) rather than blank the whole view.
+try {
+  Plotly.register([scattergl]);
+} catch (err) {
+  console.error("Could not register the scattergl (WebGL) renderer; using SVG.", err);
+}
+
+// Probe whether this browser/GPU can actually create a WebGL context. On
+// locked-down or virtualized machines (RDP/Citrix/VDI, disabled hardware
+// acceleration, or a missing GPU driver) WebGL is unavailable; defaulting
+// scattergl ON there renders a blank plot — and a failed GL context during the
+// draw can blank the entire view. Detect once so we default to the renderer that
+// actually works on this machine.
+function webglAvailable(): boolean {
+  try {
+    const canvas = document.createElement("canvas");
+    return !!(
+      window.WebGLRenderingContext &&
+      (canvas.getContext("webgl") || canvas.getContext("experimental-webgl"))
+    );
+  } catch {
+    return false;
+  }
+}
+
+const webgl_supported = webglAvailable();
 
 // const title = "Reflectivity";
 const plot_div = ref<HTMLDivElement | null>(null);
@@ -23,7 +49,7 @@ const log_x = ref(false);
 const show_resolution = ref(true);
 const apply_corrections = ref(true);
 const show_residuals = ref(false);
-const use_webgl = ref(true);
+const use_webgl = ref(webgl_supported);
 
 const props = defineProps<{
   socket: AsyncSocket;
@@ -529,7 +555,24 @@ async function draw_plot() {
     },
     ...configWithSVGDownloadButton,
   };
-  await Plotly.react(plot_div.value as HTMLDivElement, [...theory_traces, ...data_traces], layout, config);
+  const all_traces = [...theory_traces, ...data_traces];
+  try {
+    await Plotly.react(plot_div.value as HTMLDivElement, all_traces, layout, config);
+  } catch (err) {
+    // A WebGL context can fail to initialize (or be lost) at render time even
+    // when the initial probe succeeded. Rather than leave a blank plot, retry
+    // once with SVG (scatter) and latch WebGL off so later draws stay on SVG.
+    if (trace_type === "scattergl") {
+      console.error("WebGL render failed; falling back to SVG (scatter).", err);
+      use_webgl.value = false;
+      for (const trace of all_traces) {
+        trace.type = "scatter";
+      }
+      await Plotly.react(plot_div.value as HTMLDivElement, all_traces, layout, config);
+    } else {
+      throw err;
+    }
+  }
 }
 
 /**
@@ -647,8 +690,22 @@ function interp(x: number[], xp: number[], fp: number[]): number[] {
         >
       </div>
       <div class="col-auto form-check my-2">
-        <input id="use_webgl" v-model="use_webgl" type="checkbox" class="form-check-input" @change="draw_plot" />
-        <label for="use_webgl" class="form-check-label" title="Use WebGL rendering (faster for large datasets)"
+        <input
+          id="use_webgl"
+          v-model="use_webgl"
+          type="checkbox"
+          class="form-check-input"
+          :disabled="!webgl_supported"
+          @change="draw_plot"
+        />
+        <label
+          for="use_webgl"
+          class="form-check-label"
+          :title="
+            webgl_supported
+              ? 'Use WebGL rendering (faster for large datasets)'
+              : 'WebGL is not available on this machine; using SVG rendering'
+          "
           >WebGL</label
         >
       </div>
