@@ -1,0 +1,219 @@
+==============================================================================
+ REFL1D (FORK BUILD) - TROUBLESHOOTING GUIDE
+==============================================================================
+
+For the personal fork build (versions like 1.0.2+pq5). Written for a
+locked-down WORK PC: no admin rights, PowerShell scripts blocked, OneDrive
+unreachable, but GitHub downloads work.
+
+Install location (per-user, no admin):   %LOCALAPPDATA%\Refl1D
+Bundled Python (always use THIS one):     %LOCALAPPDATA%\Refl1D\python.exe
+Fork releases (reachable at work):        https://github.com/pquarterman17/refl1d/releases
+
+IMPORTANT: use Command Prompt (cmd.exe), NOT PowerShell. PowerShell is blocked
+by execution policy on the work machine ("running scripts is disabled on this
+system"). Every command below is written for cmd.exe.
+
+To open cmd.exe: press the Windows key, type  cmd  , press Enter.
+
+------------------------------------------------------------------------------
+ QUICK REFERENCE - copy/paste these into cmd.exe
+------------------------------------------------------------------------------
+
+Which build is actually running:
+    "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d --where
+
+Launch the app (pure exe, no script layer - most reliable):
+    "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d
+
+Check the client build is present (the blank-page check):
+    dir "%LOCALAPPDATA%\Refl1D\Lib\site-packages\refl1d\webview\client\dist"
+    dir "%LOCALAPPDATA%\Refl1D\Lib\site-packages\refl1d\webview\client\dist\assets"
+
+Read the last launch log:
+    type "%LOCALAPPDATA%\Refl1D\launch.log"
+
+
+==============================================================================
+ SYMPTOM 1: Browser tab opens but is BLANK / ALL WHITE, nothing loads
+==============================================================================
+
+This is the WebGL problem and it is FIXED in build 1.0.2+pq5.
+
+What is happening
+-----------------
+The app's server started fine (that is why a tab opened at all). The
+reflectivity plot was set to draw using the GPU (WebGL / "scattergl"). Work
+machines - remote desktop (RDP/Citrix), virtual desktops (VDI), or PCs with
+hardware acceleration disabled or no GPU driver - often have NO working WebGL.
+The plot then fails to render and the whole page is left blank. It works on a
+home/personal PC because that machine has WebGL.
+
+How to CONFIRM it is WebGL (10 seconds)
+---------------------------------------
+1. On the blank white tab, press  F12  (opens developer tools).
+2. Click the "Console" tab.
+3. Look for an error mentioning WebGL, GL, "context", or "scattergl".
+   If you see one, this is definitely the WebGL problem.
+   (Optional: the "Network" tab, then reload with Ctrl+R, shows if any
+    files failed to load in red - that points at SYMPTOM 2 instead.)
+
+THE FIX: install build 1.0.2+pq5 (or newer)
+-------------------------------------------
+pq5 detects whether the machine can do WebGL and automatically falls back to
+normal (SVG) rendering when it cannot, so the plot always shows.
+
+1. On the work PC, open: https://github.com/pquarterman17/refl1d/releases
+2. Download the latest "...installer.exe" (1.0.2+pq5 or higher).
+3. Run it. It installs per-user; no admin needed.
+4. Launch Refl1D. The plot should now render.
+5. Confirm the build:  "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d --where
+   It should say  1.0.2+pq5 (fork build)  or higher.
+
+Workaround for any build where the rest of the UI DOES show but the PLOT is
+blank: in the Data view, find the "WebGL" checkbox in the top row of controls
+and UNCHECK it. (In pq5+ this is automatic and the box is disabled when WebGL
+is unavailable.)
+
+
+==============================================================================
+ SYMPTOM 2: Blank page, and F12 -> Network shows files failing (404)
+==============================================================================
+
+Rare. Means the client web files did not get bundled into the build (an empty
+"dist" folder). Check it directly:
+
+    dir "%LOCALAPPDATA%\Refl1D\Lib\site-packages\refl1d\webview\client\dist"
+    dir "%LOCALAPPDATA%\Refl1D\Lib\site-packages\refl1d\webview\client\dist\assets"
+
+- If "index.html" is missing, or the "assets" folder is missing/empty, the
+  build is broken. Re-download and reinstall the latest installer from the
+  releases page. (pq5+ build process refuses to ship a build with an empty
+  assets folder, so this should not recur.)
+- If both folders are full of files, it is NOT this - go back to SYMPTOM 1.
+
+
+==============================================================================
+ SYMPTOM 3: Icon does nothing, or a window flashes and disappears
+==============================================================================
+
+Use the logged launcher so the error cannot vanish:
+
+1. Start Menu -> Refl1D -> "Refl1D (logged launch)".
+   This opens a black window that STAYS OPEN and pauses if something fails.
+2. Read what it printed. A copy is saved here:
+       type "%LOCALAPPDATA%\Refl1D\launch.log"
+
+Or launch the bundled Python directly in cmd.exe (leave the window open while
+using the app):
+
+    "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d
+
+If THAT prints an error, copy the whole thing - that is the real cause.
+
+
+==============================================================================
+ SYMPTOM 4: Wrong version / a feature is missing (the "shadowing" trap)
+==============================================================================
+
+If the startup banner says  refl1d 1.0.1  and  bumps 1.0.4  , you are running
+the OLD stock version from the internet (PyPI), NOT the fork. Fork builds say
+1.0.2+pqN. Fork-only features (CSV parameter export, WebGL fix, etc.) are
+simply absent from 1.0.1.
+
+Why: typing just  refl1d  in a shell can hit a stale "pip install refl1d" that
+shadows the fork. The fork installer does NOT put itself on the PATH on
+purpose.
+
+Fix A - always launch the fork explicitly (never just type "refl1d"):
+    "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d
+
+Fix B - remove the stale stock copy so plain "refl1d" stops shadowing it.
+    Find which Python has it, then:
+        pip uninstall refl1d
+    (This is the trick that fixed the version reporting before. It removes the
+     shadow; it does NOT touch the %LOCALAPPDATA%\Refl1D install.)
+
+Always verify after:
+    "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d --where
+
+
+==============================================================================
+ SYMPTOM 5: PowerShell error "openssl_activate-win.ps1 cannot be loaded
+            because running scripts is disabled on this system"
+==============================================================================
+
+This is HARMLESS for running the app. It only comes from the optional
+"Refl1D Powershell" Start-Menu shortcut, which tries to run a PowerShell
+script that your work PC's security policy blocks. It is NOT how the app
+launches.
+
+- Do not use the "Refl1D Powershell" shortcut on the work PC.
+- Launch with the normal desktop/Start icon, or with:
+      "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d
+- (If you ever DO need a PowerShell there, you would run it as
+   "powershell -ExecutionPolicy Bypass ...", but you should not need to.)
+
+
+==============================================================================
+ BUILT-IN DIAGNOSTIC TOOLS (shipped inside the installer)
+==============================================================================
+
+Start Menu -> Refl1D folder:
+
+  "Refl1D (logged launch)"  - launches the app, logs to launch.log, and keeps
+                              the window open / pauses if it fails.
+  "Refl1D Diagnostics"      - writes a report to your Desktop as
+                              refl1d_diag.txt (Python OK? which build? feature
+                              present? are you admin?) and shows it on screen.
+
+In the install folder (%LOCALAPPDATA%\Refl1D):
+  LAUNCH-HELP.txt  - short built-in launch instructions.
+  launch.log       - output from the most recent logged launch.
+
+
+==============================================================================
+ INSTALLING / UPGRADING THE FORK BUILD
+==============================================================================
+
+Option 1 - Installer (.exe), no admin needed (recommended on the work PC):
+  1. https://github.com/pquarterman17/refl1d/releases
+  2. Download the newest "...Windows-x86_64-installer.exe".
+  3. Run it (installs to %LOCALAPPDATA%\Refl1D).
+  4. Verify:  "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d --where
+
+Option 2 - pip wheel, into an existing allowed Python (also clears shadowing):
+  1. Download the "...py3-none-any.whl" from the same release.
+  2. In cmd.exe:   pip install --upgrade "path\to\refl1d-...-py3-none-any.whl"
+  3. Verify:       pip show refl1d        (should show 1.0.2+pq5 or newer)
+
+Latest known-good build: 1.0.2+pq5 - includes the WebGL blank-page fix.
+
+
+==============================================================================
+ IF IT IS STILL BROKEN - what to capture and send
+==============================================================================
+
+Collect these (all cmd.exe, no PowerShell needed) and send them:
+
+1. Which build:
+       "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d --where
+
+2. The launch log (run "Refl1D (logged launch)" first, then):
+       type "%LOCALAPPDATA%\Refl1D\launch.log"
+
+3. The self-diagnostic: run "Refl1D Diagnostics" from the Start Menu, then
+   attach the file it makes:  %USERPROFILE%\Desktop\refl1d_diag.txt
+
+4. For a blank tab: a photo of the F12 -> Console tab (and F12 -> Network
+   after a Ctrl+R reload).
+
+5. The client build listing:
+       dir "%LOCALAPPDATA%\Refl1D\Lib\site-packages\refl1d\webview\client\dist"
+       dir "%LOCALAPPDATA%\Refl1D\Lib\site-packages\refl1d\webview\client\dist\assets"
+
+Those five pin down almost any launch or blank-page problem in one pass.
+
+==============================================================================
+ Last updated: 2026-06-24   |   Covers fork builds up to 1.0.2+pq5
+==============================================================================
