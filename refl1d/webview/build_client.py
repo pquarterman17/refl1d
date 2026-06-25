@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
+import re
 import shutil
+import subprocess
 
 from bumps import webview as bumps_webview
 
@@ -8,15 +10,15 @@ from bumps import webview as bumps_webview
 def _run(cmd: str) -> None:
     """Run a shell command and raise if it fails.
 
-    ``os.system`` returns the process exit status (0 on success on both POSIX
-    and Windows). The original build ignored this, so a failed ``npm install``
-    or ``npm run build`` printed "Done." and exited 0 — shipping an empty or
-    partial ``dist`` that serves a blank page to users. Fail loudly instead, in
-    CI where it belongs.
+    Uses ``subprocess.run(..., check=True)`` so a non-zero exit raises a
+    ``CalledProcessError`` on both POSIX and Windows. The original build used
+    ``os.system`` and effectively ignored the status, so a failed ``npm
+    install`` or ``npm run build`` printed "Done." and exited 0 — shipping an
+    empty or partial ``dist`` that serves a blank page to users. Fail loudly
+    instead, in CI where it belongs. (``os.system`` also returns a wait-status
+    on POSIX, not a plain exit code, so the old comparison was wrong there.)
     """
-    status = os.system(cmd)
-    if status != 0:
-        raise RuntimeError(f"Command failed (exit {status}): {cmd}")
+    subprocess.run(cmd, shell=True, check=True)
 
 
 def build_client(
@@ -79,6 +81,20 @@ def build_client(
         raise RuntimeError(f"Build did not produce {index_html}")
     if not assets_dir.is_dir() or not any(assets_dir.iterdir()):
         raise RuntimeError(f"Build did not produce any assets in {assets_dir}")
+
+    # "assets dir is non-empty" is not enough: a stale or partially written dist
+    # can leave index.html pointing at a hashed bundle that isn't actually
+    # present, which 404s the JS/CSS at runtime and serves a blank white tab with
+    # no visible error. Parse index.html and confirm every local JS/CSS bundle it
+    # references exists on disk. (External URLs like the MathJax CDN don't start
+    # with ./assets and are intentionally ignored.)
+    html = index_html.read_text(encoding="utf-8")
+    referenced = re.findall(r'(?:src|href)="\.?/?(assets/[^"]+\.(?:js|css))"', html)
+    if not referenced:
+        raise RuntimeError(f"Build index.html references no local JS/CSS assets: {index_html}")
+    missing = [ref for ref in referenced if not (dist_dir / ref).exists()]
+    if missing:
+        raise RuntimeError(f"Build index.html references missing assets: {missing}")
 
     if cleanup:
         print("Cleaning up...")
