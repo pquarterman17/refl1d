@@ -49,6 +49,16 @@ jobs:
         ref: ${{ env.branch_name }}
         fetch-depth: 0
 
+    - name: Pin clean version for this one-off release build
+      if: github.event.inputs.release_tag != ''
+      run: |
+        # Tags can't be pushed from the dev environment, so force the requested
+        # release tag onto feat HEAD locally. versioningit then reports a clean
+        # version (e.g. 1.0.2+pq8) and the installer/wheel are named to match.
+        # The release+tag are created server-side by the attach step.
+        git tag -f "${{ github.event.inputs.release_tag }}" HEAD
+        git describe --tags
+
     - uses: conda-incubator/setup-miniconda@v4
       with:
         auto-update-conda: true
@@ -225,6 +235,6 @@ jobs:
         # releases are left as-is (notes untouched); we only upload to them.
         if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
           gh release create "$TAG" --repo "$REPO" \
-            --title "$TAG" --generate-notes --prerelease --target "${{ github.sha }}"
+            --title "$TAG" --generate-notes --prerelease --target "${{ env.branch_name }}"
         fi
         gh release upload "$TAG" artifacts/* --clobber --repo "$REPO"
