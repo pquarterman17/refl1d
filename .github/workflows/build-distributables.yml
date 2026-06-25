@@ -1,230 +1,47 @@
 name: Build conda-packed distribution
 
+# One-off (throwaway branch): this temporarily replaces the build workflow with
+# a tiny job that only sets the v1.0.2+pq8 release title/notes via `gh release
+# edit`. Dispatched here because a brand-new workflow file is not dispatchable
+# (the workflow_dispatch trigger must be registered on the default branch), but
+# this existing file IS, so the dispatched ref's version runs. This branch is
+# deleted right after.
 on:
-  release:
-    types: [published]
-  # Fork: the repo default branch is `master` (upstream), so `release` events
-  # run upstream's workflow, not this one. Tag-push fires THIS file (taken from
-  # the tag's commit) and builds + attaches with only git creds -- no gh
-  # `workflow` scope needed. Keep the tag at the branch HEAD (versioningit).
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Existing release tag to attach the installer + wheel to (e.g. v1.0.2+pq4). Blank = run artifacts only."
+        description: "unused"
         required: false
         default: ""
 
-# Fork: the attach step uploads release assets via the in-Actions token, which
-# needs contents:write. Without this the upload 403s ("Resource not accessible
-# by integration") even though the build succeeds.
 permissions:
   contents: write
 
-env:
-  # Fork build: package the feat/plot-webgl-payload branch (all four plot perf
-  # changes: #1+#2 redraw fixes, #3 theory-only updates, #4 WebGL). Test build.
-  branch_name: feat/plot-webgl-payload
-  PACKAGE_NAME: refl1d
-  PYTHON_VERSION: 3.12
-
 jobs:
-  build_and_publish:
-    runs-on: ${{ matrix.config.os }}
-    defaults:
-      run:
-        shell: bash -el {0}
-    strategy:
-      matrix:
-        config:
-          # Fork build: Windows only. macOS needs Apple signing secrets the fork
-          # does not have; Linux/macOS omitted to keep test builds fast.
-          - { os: windows-latest }
-
+  edit_release_notes:
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
-      with:
-        ref: ${{ env.branch_name }}
-        fetch-depth: 0
+      - name: Set pq8 release title and notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat > notes.md <<'EOF'
+          Fork test build from `feat/plot-webgl-payload`. **Windows only**, unsigned (SmartScreen → **More info** → **Run anyway**). Download the `*-Windows-x86_64-installer.exe` asset below. A pip-installable `*.whl` is also attached for installing into an existing Python.
 
-    - uses: conda-incubator/setup-miniconda@v4
-      with:
-        auto-update-conda: true
-        python-version: ${{ env.PYTHON_VERSION }}
-        miniforge-version: latest
-        activate-environment: builder
+          ### Fixed
+          - **Blank white tab on startup.** The WebGL reflectivity plot pulls in `typedarray-pool`, which the client's `global: {}` build shim broke (`Cannot read properties of undefined (reading 'UINT8C')`) — crashing the app before it rendered. Fixed by pointing the shim at the real browser global (`global: "window"`).
 
-    - name: Build conda-packed (all platforms)
-      run: |
-        conda install -y versioningit nodejs
-        conda activate base
-        ./extra/build_conda_packed.sh
+          ### Also new in this build
+          - **On-page error reporting.** If the app ever fails to load, it now shows the actual error on the page (and detects browsers too old to run it, e.g. Internet Explorer) instead of a blank tab.
+          - **Working self-diagnostics.** The **Refl1D Diagnostics** Start-Menu shortcut now runs directly through `python.exe` (survives script-blocking policies), writes `refl1d_diag.txt`, and opens it in Notepad.
+          - **Excel-friendly parameter export.** Exporting a fit also writes `<model>-pars.csv` (plus a per-dataset table for simultaneous fits), with on-screen confirmation or a visible error if it can't be written.
 
-    - name: Build pip wheel (portable py3-none-any) for the release
-      run: |
-        # Fork: attach a pip-installable wheel alongside the .exe installer.
-        # setup.py only compiles the C++ extension when BUILD_EXTENSION is set,
-        # so this is a portable py3-none-any wheel (default numba backend) that
-        # installs on any OS / Python >=3.10. It lets users `pip install
-        # --upgrade` into an existing (policy-allowed) Python environment
-        # instead of relying on the bundled-app launcher -- which also
-        # overwrites any stale stock `refl1d` that would otherwise shadow it.
-        # The webview client was already built into the tree by
-        # build_conda_packed.sh above, so it is packaged into the wheel.
-        python -m pip install build
-        mkdir -p artifacts
-        python -m build --wheel --outdir artifacts .
+          ### If it still doesn't open
+          The blank tab now prints the error in red — screenshot it. Or run **Refl1D Diagnostics** from the Start Menu and send `refl1d_diag.txt`.
 
-    - name: Create MacOS App
-      if: startsWith(matrix.config.os, 'macos')
-      env:
-          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE_ISA }}
-          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_ISA_PWD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          NOTARIZATION_USERNAME: ${{ secrets.MACOS_NOTARIZATION_USERNAME }}
-          NOTARIZATION_PASSWORD: ${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
-          DEVELOPER_IDENTITY: "Developer ID Application: The International Scattering Alliance (8CX8K63BQM)"
-      run: |
-        echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
-        security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-        security default-keychain -s build.keychain
-        security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-        security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
-        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-        security find-identity -p codesigning
-
-        echo "Creating MacOS App"
-        # This assumes that conda-packed enviroment exists at "conda_packed"
-
-        VERSION=$(versioningit)
-        MAJOR_MINOR_PATCH=$(sed -E 's/(^[0-9]+\.[0-9]+\.[0-9]+).*$/\1/' <<< "$VERSION")
-        PRODUCT_NAME="$PACKAGE_NAME-$VERSION"
-        FULL_PACKAGE_NAME="$PRODUCT_NAME-$(uname -s)-$(uname -m)"
-        BUILD_DIR="${PACKAGE_NAME}_installer"
-        mkdir -p $BUILD_DIR
-        APP_FOLDER="$BUILD_DIR/$PRODUCT_NAME"
-        APP="$APP_FOLDER/${PACKAGE_NAME}.app"
-        PYTHON_FRAMEWORK="$APP/Contents/Frameworks/python.framework"
-        PYTHON_ENV="$PYTHON_FRAMEWORK/Resources/env"
-        ln -s /Applications "$BUILD_DIR/Applications"
-        cp -R -P "extra/platform_resources/macos/app_folder_template" "$APP_FOLDER"
-        cp -R -P "conda_packed" "$PYTHON_ENV"
-        plutil -replace CFBundleVersion -string "$VERSION" "$APP/Contents/Info.plist"
-        plutil -replace CFBundleShortVersionString -string "$MAJOR_MINOR_PATCH" "$APP/Contents/Info.plist"
-        plutil -replace NSHumanReadableCopyright -string "Copyright $(date +'%Y') the $PACKAGE_NAME developers" "$APP/Contents/Info.plist"
-
-        sign_file() {
-            codesign --force --timestamp --options=runtime --verify --verbose=4 --sign "${DEVELOPER_IDENTITY}" "$1"
-        }
-
-        SRC_ENTITLEMENTS="extra/platform_resources/macos/app_folder_template/${PACKAGE_NAME}.app/Contents/Frameworks/python.framework/Resources/Entitlements.plist"
-
-        sign_with_entitlements() {
-          codesign --verify --options=runtime --entitlements "${SRC_ENTITLEMENTS}" --timestamp --verbose=4 --force --sign "${DEVELOPER_IDENTITY}" "$1"
-        }
-
-        # Sign shared libraries
-        find "$PYTHON_ENV" -name "*\.so" -print0 | while IFS= read -r -d '' file; do sign_file "$file"; done;
-        find "$PYTHON_ENV" -name "*\.dylib" -print0 | while IFS= read -r -d '' file; do sign_file "$file"; done;
-        find "$PYTHON_ENV/bin" -type f -perm +111 -print0 | while IFS= read -r -d '' file; do sign_file "$file"; done;
-
-        # Sign python framework with entitlements
-        sign_with_entitlements "$PYTHON_FRAMEWORK/Versions/A/Resources/Entitlements.plist"
-        PYTHON_EXECUTABLE="$(realpath $PYTHON_ENV/bin/python)"
-        sign_with_entitlements "$PYTHON_EXECUTABLE"
-        sign_with_entitlements "$PYTHON_FRAMEWORK"
-
-        # Sign apps
-        codesign --verify --options=runtime --timestamp --verbose=4 --force --sign "${DEVELOPER_IDENTITY}" "$APP/Contents/MacOS/${PACKAGE_NAME}_webview"
-        codesign --verify --options=runtime --timestamp --verbose=4 --force --sign "${DEVELOPER_IDENTITY}" "$APP"
-        codesign --verify --options=runtime --timestamp --verbose=4 --force --sign "${DEVELOPER_IDENTITY}" "$APP_FOLDER/${PACKAGE_NAME}_shell.app"
-
-        # After signing, ensure all writes are flushed
-        sync
-        sleep 2
-
-        DMG="artifacts/$FULL_PACKAGE_NAME.dmg"
-        mkdir -p artifacts
-        hdiutil create $DMG -srcfolder "$BUILD_DIR" -ov -format UDZO
-        codesign -s "${DEVELOPER_IDENTITY}" $DMG
-
-        # Clean up signing keys
-        security delete-keychain build.keychain
-        rm certificate.p12
-
-        # Notarize
-        xcrun notarytool submit --wait --apple-id "$NOTARIZATION_USERNAME" --password "$NOTARIZATION_PASSWORD" --team-id 8CX8K63BQM $DMG
-
-        # Staple
-        xcrun stapler staple $DMG
-
-    - name: Create Windows Installer
-      if: startsWith(matrix.config.os, 'windows')
-      run: |
-        echo "Creating Windows Installer"
-        # This assumes that conda-packed enviroment exists at "conda_packed"
-        VERSION=$(versioningit)
-        MAJOR_MINOR_PATCH=$(sed -E 's/(^[0-9]+\.[0-9]+\.[0-9]+).*$/\1/' <<< "$VERSION")
-
-        FULL_PACKAGE_NAME="$PACKAGE_NAME-$VERSION-Windows-$(uname -m)"
-
-        # clean up junk from conda-pack operation:
-        find conda_packed -name "*.conda_trash" -delete
-
-        conda install -y nsis
-
-        # create the installer:
-        PRODUCT_NAME="$PACKAGE_NAME-$VERSION"
-        $CONDA_PREFIX/NSIS/makensis.exe -DPRODUCT_NAME="$PRODUCT_NAME" -DPRODUCT_VERSION="$MAJOR_MINOR_PATCH.0" extra/installer.nsi
-
-        mkdir -p artifacts
-        mv extra/Refl1DWebviewSetup.exe "artifacts/$FULL_PACKAGE_NAME-installer.exe"
-
-    - name: Create Linux Installer
-      if: startsWith(matrix.config.os, 'ubuntu')
-      run: |
-        echo "Creating Linux Installer"
-        conda info
-
-        VERSION=$(versioningit)
-        FULL_PACKAGE_NAME="$PACKAGE_NAME-$VERSION-$(uname -s)-$(uname -m)"
-        PRODUCT_NAME="$PACKAGE_NAME-$VERSION"
-
-        mkdir -p "$PRODUCT_NAME"
-        cp extra/platform_resources/linux/* "$PRODUCT_NAME"
-
-        mv conda_packed/ "$PRODUCT_NAME/env"
-        mkdir -p artifacts
-        tar -czf "artifacts/$FULL_PACKAGE_NAME.tar.gz" "$PRODUCT_NAME"
-
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v7
-      with:
-        name: artifacts-${{ matrix.config.os }}-${{ matrix.config.py }}
-        path: artifacts/*
-
-    - name: Attach distributables to the release
-      # Fires on a tag push (github.ref_name = the tag) or a manual dispatch
-      # that supplies release_tag. Uses the in-Actions GITHUB_TOKEN, so no
-      # personal `workflow` scope is needed. `gh release upload` handles PEP 440
-      # local-version tags like `v1.0.2+pq4` (the `+` 404'd the old
-      # johnwbyrd/update-release action) and leaves the release notes untouched.
-      if: startsWith(github.ref, 'refs/tags') || github.event.inputs.release_tag != ''
-      shell: bash
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        TAG="${{ github.event.inputs.release_tag }}"
-        if [ -z "$TAG" ]; then TAG="${{ github.ref_name }}"; fi
-        REPO="${{ github.repository }}"
-        # Create the release if it doesn't exist yet, so a plain tag push (or a
-        # dispatch naming a brand-new tag) yields a complete release in one step
-        # instead of requiring the release to be hand-created first. Existing
-        # releases are left as-is (notes untouched); we only upload to them.
-        if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-          gh release create "$TAG" --repo "$REPO" \
-            --title "$TAG" --generate-notes --prerelease --target "${{ github.sha }}"
-        fi
-        gh release upload "$TAG" artifacts/* --clobber --repo "$REPO"
+          See the [fork wiki](https://github.com/pquarterman17/refl1d/wiki) for install and usage.
+          EOF
+          gh release edit "v1.0.2+pq8" --repo "${{ github.repository }}" \
+            --title "refl1d 1.0.2+pq8 — blank-tab fix (WebGL) + CSV export (fork)" \
+            --notes-file notes.md --prerelease
+          echo "Updated v1.0.2+pq8 release notes."
