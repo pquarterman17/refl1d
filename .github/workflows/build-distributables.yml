@@ -49,6 +49,15 @@ jobs:
         ref: ${{ env.branch_name }}
         fetch-depth: 0
 
+    - name: Pin clean pq7 version for this one-off release build
+      run: |
+        # Tags can't be pushed from the dev environment, so force the local tag
+        # onto feat HEAD here. versioningit then reports a clean "1.0.2+pq7" and
+        # the installer/wheel are named pq7. The release+tag are created
+        # server-side by the attach step (gh release create --target feat).
+        git tag -f v1.0.2+pq7 HEAD
+        git describe --tags
+
     - uses: conda-incubator/setup-miniconda@v4
       with:
         auto-update-conda: true
@@ -224,7 +233,9 @@ jobs:
         # instead of requiring the release to be hand-created first. Existing
         # releases are left as-is (notes untouched); we only upload to them.
         if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          # One-off branch: point the tag/release at feat HEAD (the built code),
+          # not this CI branch's commit.
           gh release create "$TAG" --repo "$REPO" \
-            --title "$TAG" --generate-notes --prerelease --target "${{ github.sha }}"
+            --title "$TAG" --generate-notes --prerelease --target "${{ env.branch_name }}"
         fi
         gh release upload "$TAG" artifacts/* --clobber --repo "$REPO"
