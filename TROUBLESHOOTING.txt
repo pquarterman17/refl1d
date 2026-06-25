@@ -2,7 +2,7 @@
  REFL1D (FORK BUILD) - TROUBLESHOOTING GUIDE
 ==============================================================================
 
-For the personal fork build (versions like 1.0.2+pq5). Written for a
+For the personal fork build (versions like 1.0.2+pq6). Written for a
 locked-down WORK PC: no admin rights, PowerShell scripts blocked, OneDrive
 unreachable, but GitHub downloads work.
 
@@ -38,7 +38,9 @@ Read the last launch log:
  SYMPTOM 1: Browser tab opens but is BLANK / ALL WHITE, nothing loads
 ==============================================================================
 
-This is the WebGL problem and it is FIXED in build 1.0.2+pq5.
+This is the WebGL problem and it is FIXED in build 1.0.2+pq6. (pq5 tried to
+fix it but the detection was incomplete on RDP/Citrix/VDI machines, so the
+plot could still come up blank there. pq6 is the real fix - use pq6 or newer.)
 
 What is happening
 -----------------
@@ -58,17 +60,19 @@ How to CONFIRM it is WebGL (10 seconds)
    (Optional: the "Network" tab, then reload with Ctrl+R, shows if any
     files failed to load in red - that points at SYMPTOM 2 instead.)
 
-THE FIX: install build 1.0.2+pq5 (or newer)
+THE FIX: install build 1.0.2+pq6 (or newer)
 -------------------------------------------
-pq5 detects whether the machine can do WebGL and automatically falls back to
-normal (SVG) rendering when it cannot, so the plot always shows.
+pq6 detects whether the machine can ACTUALLY render WebGL (not just whether a
+context exists) and automatically falls back to normal (SVG) rendering when it
+cannot - including on software renderers and after a silent GPU failure - so
+the plot always shows.
 
 1. On the work PC, open: https://github.com/pquarterman17/refl1d/releases
-2. Download the latest "...installer.exe" (1.0.2+pq5 or higher).
+2. Download the latest "...installer.exe" (1.0.2+pq6 or higher).
 3. Run it. It installs per-user; no admin needed.
 4. Launch Refl1D. The plot should now render.
 5. Confirm the build:  "%LOCALAPPDATA%\Refl1D\python.exe" -m refl1d --where
-   It should say  1.0.2+pq5 (fork build)  or higher.
+   It should say  1.0.2+pq6 (fork build)  or higher.
 
 Workaround for any build where the rest of the UI DOES show but the PLOT is
 blank: in the Data view, find the "WebGL" checkbox in the top row of controls
@@ -187,7 +191,9 @@ Option 2 - pip wheel, into an existing allowed Python (also clears shadowing):
   2. In cmd.exe:   pip install --upgrade "path\to\refl1d-...-py3-none-any.whl"
   3. Verify:       pip show refl1d        (should show 1.0.2+pq5 or newer)
 
-Latest known-good build: 1.0.2+pq5 - includes the WebGL blank-page fix.
+Latest known-good build: 1.0.2+pq6 - includes the real WebGL blank-page fix
+(probe + post-render fallback) and a build guard against blank-tab (missing
+JS) builds.
 
 
 ==============================================================================
@@ -215,5 +221,5 @@ Collect these (all cmd.exe, no PowerShell needed) and send them:
 Those five pin down almost any launch or blank-page problem in one pass.
 
 ==============================================================================
- Last updated: 2026-06-24   |   Covers fork builds up to 1.0.2+pq5
+ Last updated: 2026-06-25   |   Covers fork builds up to 1.0.2+pq6
 ==============================================================================
