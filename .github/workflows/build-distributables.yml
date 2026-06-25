@@ -218,4 +218,13 @@ jobs:
       run: |
         TAG="${{ github.event.inputs.release_tag }}"
         if [ -z "$TAG" ]; then TAG="${{ github.ref_name }}"; fi
-        gh release upload "$TAG" artifacts/* --clobber --repo "${{ github.repository }}"
+        REPO="${{ github.repository }}"
+        # Create the release if it doesn't exist yet, so a plain tag push (or a
+        # dispatch naming a brand-new tag) yields a complete release in one step
+        # instead of requiring the release to be hand-created first. Existing
+        # releases are left as-is (notes untouched); we only upload to them.
+        if ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+          gh release create "$TAG" --repo "$REPO" \
+            --title "$TAG" --generate-notes --prerelease --target "${{ github.sha }}"
+        fi
+        gh release upload "$TAG" artifacts/* --clobber --repo "$REPO"
