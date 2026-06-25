@@ -27,10 +27,39 @@ try {
 function webglAvailable(): boolean {
   try {
     const canvas = document.createElement("canvas");
-    return !!(
-      window.WebGLRenderingContext &&
-      (canvas.getContext("webgl") || canvas.getContext("experimental-webgl"))
-    );
+    const gl = (canvas.getContext("webgl") ||
+      canvas.getContext("experimental-webgl")) as WebGLRenderingContext | null;
+    if (!gl || gl.isContextLost()) {
+      return false;
+    }
+    // A plain getContext check is a false positive on locked-down/virtualized
+    // GPUs (RDP/Citrix/VDI): they hand back a context that can't actually drive
+    // scattergl. scattergl renders through regl, which requests exactly these two
+    // extensions and throws when either is missing — and Plotly swallows that
+    // throw and silently shows a blank "no-webgl" panel instead. Require what regl
+    // requires so the probe predicts the real outcome.
+    if (
+      gl.getExtension("ANGLE_instanced_arrays") === null ||
+      gl.getExtension("OES_element_index_uint") === null
+    ) {
+      return false;
+    }
+    // Software rasterizers (SwiftShader / llvmpipe / "Microsoft Basic Render")
+    // return a usable-looking context that has those extensions but renders
+    // slowly or gets blocklisted mid-session on RDP/Citrix/VDI — the exact
+    // machines where the plot blanks. Prefer SVG there; reflectivity datasets are
+    // small enough that SVG is plenty fast. (renderer is "" when the browser
+    // hides it for privacy, in which case we keep WebGL on.)
+    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    const renderer = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : "";
+    if (/swiftshader|software|llvmpipe|microsoft basic render/i.test(renderer)) {
+      return false;
+    }
+    // Release the throwaway probe context immediately so it doesn't count against
+    // the browser's ~16 live-context cap (which, when exceeded, drops the plot's
+    // own context and blanks it).
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return true;
   } catch {
     return false;
   }
@@ -556,22 +585,40 @@ async function draw_plot() {
     ...configWithSVGDownloadButton,
   };
   const all_traces = [...theory_traces, ...data_traces];
-  try {
-    await Plotly.react(plot_div.value as HTMLDivElement, all_traces, layout, config);
-  } catch (err) {
-    // A WebGL context can fail to initialize (or be lost) at render time even
-    // when the initial probe succeeded. Rather than leave a blank plot, retry
-    // once with SVG (scatter) and latch WebGL off so later draws stay on SVG.
-    if (trace_type === "scattergl") {
-      console.error("WebGL render failed; falling back to SVG (scatter).", err);
-      use_webgl.value = false;
-      for (const trace of all_traces) {
-        trace.type = "scatter";
-      }
-      await Plotly.react(plot_div.value as HTMLDivElement, all_traces, layout, config);
-    } else {
-      throw err;
+  const div = plot_div.value as HTMLDivElement;
+
+  // Re-render every trace as SVG (scatter) and latch WebGL off so later draws
+  // stay on SVG. Shared by both fallback triggers below.
+  const fallbackToSVG = async () => {
+    use_webgl.value = false;
+    for (const trace of all_traces) {
+      trace.type = "scatter";
     }
+    await Plotly.react(div, all_traces, layout, config);
+  };
+
+  try {
+    await Plotly.react(div, all_traces, layout, config);
+  } catch (err) {
+    // Some browsers/plotly versions DO throw on a failed GL context; retry once
+    // with SVG and latch WebGL off.
+    if (trace_type === "scattergl") {
+      console.error("WebGL render threw; falling back to SVG (scatter).", err);
+      await fallbackToSVG();
+      return;
+    }
+    throw err;
+  }
+
+  // Primary defense: on a locked-down/virtualized machine Plotly does NOT throw
+  // when scattergl's WebGL/regl context fails — prepare_regl catches the error
+  // internally and injects a ".no-webgl" panel (white background) where the plot
+  // should be, then resolves normally. So the catch above is dead code on exactly
+  // those machines. Detect the injected element and fall back to SVG, which always
+  // renders.
+  if (trace_type === "scattergl" && div.querySelector(".no-webgl")) {
+    console.warn("WebGL unavailable at render time; falling back to SVG (scatter).");
+    await fallbackToSVG();
   }
 }
 
