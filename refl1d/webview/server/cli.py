@@ -49,11 +49,124 @@ def _build_identity() -> str:
     )
 
 
+def _check_client_build() -> str:
+    """Verify the built webview client the server will serve actually exists.
+
+    The server serves ``client/dist/index.html`` at ``/`` and the hashed
+    ``client/dist/assets/*`` bundles it references. A missing ``dist`` or a
+    referenced bundle that isn't on disk is exactly what produces a blank white
+    tab at runtime. Mirror the build-time guard here so an end user can confirm
+    the packaged client is intact without DevTools.
+    """
+    import re
+
+    dist = CLIENT_PATH / "dist"
+    index_html = dist / "index.html"
+    if not index_html.exists():
+        return f"PROBLEM: built client missing ({index_html} not found) -- this causes a blank page"
+    try:
+        html = index_html.read_text(encoding="utf-8")
+    except Exception as exc:
+        return f"PROBLEM: could not read {index_html}: {exc}"
+    referenced = re.findall(r'(?:src|href)="\.?/?(assets/[^"]+\.(?:js|css))"', html)
+    if not referenced:
+        return f"PROBLEM: {index_html} references no local JS/CSS bundles (stale/partial build)"
+    missing = [ref for ref in referenced if not (dist / ref).exists()]
+    if missing:
+        return f"PROBLEM: index.html references {len(missing)} missing bundle(s): {missing} -- this causes a blank page"
+    return f"OK ({len(referenced)} bundle(s) present at {dist})"
+
+
+def _default_browser() -> str:
+    """Best-effort Windows default-browser check.
+
+    An Internet Explorer / legacy default browser can't run the ES-module client
+    and shows a blank tab even when everything else is fine, so flag it.
+    """
+    if sys.platform != "win32":
+        return f"(not checked on {sys.platform})"
+    try:
+        import winreg
+
+        key = r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as k:
+            prog_id, _ = winreg.QueryValueEx(k, "ProgId")
+        if "IE" in prog_id or "InternetExplorer" in prog_id:
+            return f"{prog_id}  <-- WARNING: Internet Explorer cannot run Refl1D; set Chrome or Edge as default, or paste the URL into Chrome/Edge"
+        return prog_id
+    except Exception as exc:
+        return f"(could not determine: {exc})"
+
+
+def run_self_diagnostic() -> None:
+    """Write a human-readable diagnostic report, print it, and open it.
+
+    Runs directly under ``python.exe`` (``python -m refl1d --diagnose``) so it
+    works on locked-down machines where ``.bat``/PowerShell scripts are blocked.
+    Writes the report next to the bundled ``python.exe`` (and falls back to the
+    temp dir), then opens it so the user can read/screenshot/send it without
+    needing DevTools or knowing how to copy from a console.
+    """
+    import os
+    import platform
+    import tempfile
+
+    lines = ["Refl1D self-diagnostic", "======================", ""]
+    lines.append("[build]")
+    lines.append(_build_identity())
+    lines.append("")
+    lines.append(f"[python]  {sys.version.splitlines()[0]}")
+    lines.append(f"[platform]  {platform.platform()}")
+    lines.append("")
+
+    lines.append("[CSV parameter export feature]")
+    try:
+        import refl1d.webview.server.export_csv as _m
+
+        present = hasattr(_m, "write_parameters_csv")
+        lines.append("  present" if present else "  MISSING")
+    except Exception as exc:
+        lines.append(f"  MISSING ({exc})")
+    lines.append("")
+
+    lines.append("[webview client build]  (a problem here = blank white tab)")
+    lines.append(f"  {_check_client_build()}")
+    lines.append("")
+
+    lines.append("[default browser]")
+    lines.append(f"  {_default_browser()}")
+    lines.append("")
+    lines.append("Done. Please send this file to support.")
+
+    report = "\n".join(lines)
+    print(report)
+
+    out_path = None
+    for candidate in (Path(sys.executable).parent / "refl1d_diag.txt", Path(tempfile.gettempdir()) / "refl1d_diag.txt"):
+        try:
+            candidate.write_text(report, encoding="utf-8")
+            out_path = candidate
+            break
+        except Exception:
+            continue
+    if out_path is not None:
+        print(f"\nSaved to: {out_path}")
+        try:
+            os.startfile(str(out_path))  # type: ignore[attr-defined]  # Windows-only; opens in Notepad
+        except Exception:
+            pass
+
+
 def main():
     # Fork-only: a quick, non-launching "which build am I?" probe. Uses --where
     # so it does not collide with bumps' own --version (handled by plugin_main).
     if len(sys.argv) > 1 and sys.argv[1] in ("--where", "--build-info"):
         print(_build_identity())
+        return
+    # Fork-only: a script-free self-diagnostic (writes + opens a report file),
+    # for locked-down machines where the .bat/PowerShell diagnostics are blocked.
+    if len(sys.argv) > 1 and sys.argv[1] in ("--diagnose", "--selfcheck", "--doctor"):
+        run_self_diagnostic()
         return
     if len(sys.argv) > 1 and sys.argv[1] == "align":
         # Command line tool to regenerate the profile uncertainty plot:

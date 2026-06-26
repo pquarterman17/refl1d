@@ -173,9 +173,12 @@ Section "Start Menu Shortcuts" SEC02
     CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Refl1D (logged launch).lnk" \
         "$INSTDIR\refl1d_launch.bat" "" \
         "$INSTDIR\share\icons\refl1d.ico"
-    ; Self-service diagnostic (writes Desktop\refl1d_diag.txt).
+    ; Self-service diagnostic. Fork: launch python.exe DIRECTLY (no .bat), so it
+    ; survives the script-execution policy that blocks the .bat on locked-down
+    ; machines. "--diagnose" writes refl1d_diag.txt next to python.exe and opens
+    ; it in Notepad. (The .bat above is kept only as a manual fallback.)
     CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Refl1D Diagnostics.lnk" \
-        "$INSTDIR\refl1d_diagnose.bat" "" \
+        "$INSTDIR\python.exe" "-m refl1d --diagnose" \
         "$INSTDIR\share\icons\refl1d.ico"
     SetOutPath "%USERPROFILE%"
     CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Refl1DPowershell.lnk" \

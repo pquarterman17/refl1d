@@ -2,6 +2,68 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <!--
+      Fork: surface startup failures ON THE PAGE instead of leaving a blank
+      white tab. On locked-down machines DevTools (F12) is often disabled by
+      policy, so a blank tab gives the user nothing to report. This ES5-safe
+      inline script (no modules/arrow-functions, so it runs even on very old
+      browsers) installs global error handlers, detects browsers too old to run
+      the ES-module bundle, and shows a readable message if the app never mounts.
+    -->
+    <script>
+      (function () {
+        var shown = false;
+        function showError(title, detail) {
+          shown = true;
+          var el = document.getElementById("app") || document.body;
+          if (!el) return;
+          el.innerHTML =
+            '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:40px auto;padding:24px;border:1px solid #d33;border-radius:8px;color:#222">' +
+            '<h2 style="color:#b00;margin-top:0">Refl1D could not start</h2>' +
+            "<p>The program launched, but the interface failed to load in this browser.</p>" +
+            '<p style="margin:12px 0"><b>What to try first:</b> copy the address from the browser\'s address bar into <b>Google Chrome</b> or <b>Microsoft Edge</b>.</p>' +
+            '<p><b>Details (please screenshot and send these):</b></p>' +
+            '<pre style="white-space:pre-wrap;background:#f6f6f6;border:1px solid #ccc;border-radius:4px;padding:12px;font-size:12px">' +
+            String(title) + "\n\n" + String(detail) +
+            "</pre></div>";
+        }
+        window.addEventListener("error", function (e) {
+          showError(
+            "JavaScript error",
+            (e && e.message ? e.message : "unknown error") +
+              "\n" +
+              (e && e.error && e.error.stack ? e.error.stack : (e ? e.filename + ":" + e.lineno : ""))
+          );
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e && e.reason;
+          showError("Unhandled promise rejection", r && (r.stack || r.message) ? (r.stack || r.message) : String(r));
+        });
+        // ES modules are required to run the app. Browsers that don't support
+        // them (e.g. Internet Explorer) silently ignore the module <script> and
+        // leave the tab blank with no error event -- detect that explicitly.
+        if (!("noModule" in document.createElement("script"))) {
+          showError(
+            "This browser is too old to run Refl1D",
+            "It does not support modern JavaScript (ES modules). Open the address shown in your browser's address bar in Google Chrome or Microsoft Edge instead."
+          );
+          return;
+        }
+        // Last resort: if nothing rendered and no error fired within 10s, the
+        // bundle likely failed to load (blocked by network/security policy).
+        window.addEventListener("load", function () {
+          setTimeout(function () {
+            var app = document.getElementById("app");
+            if (!shown && app && app.childElementCount === 0) {
+              showError(
+                "The interface did not finish loading",
+                "No error was reported, but nothing rendered within 10 seconds. The app's script may be blocked by network or security software. Try Google Chrome or Microsoft Edge, or contact IT about access to the local Refl1D address."
+              );
+            }
+          }, 10000);
+        });
+      })();
+    </script>
     <link rel="icon" href="./src/assets/refl1d-icon_48x48x32.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script type="text/javascript" async
