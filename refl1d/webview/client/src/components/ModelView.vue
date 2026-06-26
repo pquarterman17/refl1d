@@ -61,7 +61,12 @@ function toggle_multiple() {
     current_models.value.splice(0, current_models.value.length - 1);
     draw_requested.value = true;
   }
-  Plotly.Plots.resize(plot_div.value as HTMLDivElement);
+  const div = plot_div.value as HTMLDivElement | undefined;
+  // Guard like DataView's observer: only resize a drawn, displayed plot, and
+  // swallow any rejection so it can't bubble up as an unhandled rejection.
+  if (div && (div as unknown as { _fullLayout?: unknown })._fullLayout && (div.offsetWidth || div.offsetHeight)) {
+    Promise.resolve(Plotly.Plots.resize(div)).catch(() => {});
+  }
 }
 
 function requestRedraw() {

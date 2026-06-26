@@ -99,7 +99,15 @@ props.socket.on("model_loaded", () => {
 let resize_observer: ResizeObserver | null = null;
 onMounted(() => {
   resize_observer = new ResizeObserver(() => {
-    if (plot_div.value) Plotly.Plots.resize(plot_div.value);
+    const div = plot_div.value as HTMLDivElement | undefined;
+    // Skip when the plot isn't drawn yet, or its container is hidden / zero-size
+    // (e.g. an inactive tab). Plotly rejects a resize on a not-displayed div
+    // ("Resize must be passed a displayed plot div element"), and a
+    // ResizeObserver fires in exactly those cases. Swallow any residual
+    // rejection so it never surfaces as an unhandled promise rejection.
+    if (!div || !(div as unknown as { _fullLayout?: unknown })._fullLayout) return;
+    if (div.offsetWidth === 0 && div.offsetHeight === 0) return;
+    Promise.resolve(Plotly.Plots.resize(div)).catch(() => {});
   });
   if (plot_div.value) resize_observer.observe(plot_div.value);
 });

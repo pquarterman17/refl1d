@@ -14,8 +14,19 @@
       (function () {
         var shown = false;
         function showError(title, detail) {
+          // Only take over the page for a STARTUP failure (nothing rendered
+          // yet). Once the app has mounted, a later async error (e.g. a benign
+          // Plotly resize-on-hidden-div rejection) must NOT blank a working UI
+          // -- just log it to the console.
+          var app = document.getElementById("app");
+          if (app && app.childElementCount > 0) {
+            try {
+              console.error(String(title) + ": " + String(detail));
+            } catch (e) {}
+            return;
+          }
           shown = true;
-          var el = document.getElementById("app") || document.body;
+          var el = app || document.body;
           if (!el) return;
           el.innerHTML =
             '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:720px;margin:40px auto;padding:24px;border:1px solid #d33;border-radius:8px;color:#222">' +
